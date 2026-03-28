@@ -56,7 +56,7 @@ MODEL_DIR_NAME = "Fun-CosyVoice3-0.5B-2512"      # Local storage directory name
 
 # Key files required for integrity verification
 REQUIRED_FILES = [
-    "cosyvoice.yaml",
+    "cosyvoice2.yaml",
     "campplus.onnx",
 ]
 

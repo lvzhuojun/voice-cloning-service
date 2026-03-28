@@ -181,7 +181,7 @@ def check_model_files():
         return
 
     if os.path.exists(cosyvoice_dir):
-        key_files = ["cosyvoice.yaml", "campplus.onnx"]
+        key_files = ["cosyvoice2.yaml", "campplus.onnx"]
         found = [f for f in key_files if os.path.exists(os.path.join(cosyvoice_dir, f))]
         if found:
             total_size = sum(
