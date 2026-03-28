@@ -4,6 +4,11 @@ storage/pretrained_models/
 # 用户上传的临时音频
 storage/uploads/
 
+# 训练用音频样本（个人录音，不进仓库）
+data/samples/*/
+# 保留 README.md 说明文件
+!data/samples/README.md
+
 # 训练好的音色包（生产数据，不纳入版本控制）
 storage/voicepacks/
 
