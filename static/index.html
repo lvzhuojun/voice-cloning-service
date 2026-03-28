@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>语音克隆服务</title>
+  <style>
+    /* ── 全局基础样式 ──────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --primary: #4f6ef7;
+      --primary-hover: #3b57e0;
+      --danger: #e74c3c;
+      --success: #27ae60;
+      --warning: #f39c12;
+      --bg: #f0f2f7;
+      --card: #ffffff;
+      --text: #2c3e50;
+      --muted: #7f8c9a;
+      --border: #dde1ea;
+      --radius: 10px;
+      --shadow: 0 2px 12px rgba(0,0,0,0.08);
+    }
+    body { font-family: "PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+
+    /* ── 顶部状态栏 ────────────────────────────────────── */
+    .statusbar {
+      background: linear-gradient(135deg, #2c3e50 0%, #3d5066 100%);
+      color: #ecf0f1;
+      padding: 0 24px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      position: sticky; top: 0; z-index: 100;
+    }
+    .statusbar h1 { font-size: 18px; font-weight: 600; letter-spacing: 0.5px; }
+    .status-pills { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 500;
+    }
+    .pill-ok    { background: rgba(39,174,96,0.2);  color: #2ecc71; }
+    .pill-warn  { background: rgba(243,156,18,0.2); color: #f39c12; }
+    .pill-err   { background: rgba(231,76,60,0.2);  color: #e74c3c; }
+    .pill-info  { background: rgba(79,110,247,0.2); color: #7ea8fa; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+
+    /* ── 主内容区 ──────────────────────────────────────── */
+    .main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+
+    /* ── 卡片 ──────────────────────────────────────────── */
+    .card {
+      background: var(--card); border-radius: var(--radius);
+      box-shadow: var(--shadow); padding: 24px; margin-bottom: 20px;
+    }
+    .card h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+    .card h2 .icon { font-size: 18px; }
+
+    /* ── 表单元素 ──────────────────────────────────────── */
+    label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; margin-top: 12px; }
+    label:first-child { margin-top: 0; }
+    input[type=text], select, textarea {
+      width: 100%; padding: 9px 12px; border: 1px solid var(--border);
+      border-radius: 6px; font-size: 14px; color: var(--text);
+      background: #fff; transition: border 0.2s;
+    }
+    input[type=text]:focus, select:focus, textarea:focus {
+      outline: none; border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(79,110,247,0.12);
+    }
+
+    /* ── 按钮 ──────────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 9px 20px; border-radius: 6px; font-size: 14px;
+      font-weight: 500; cursor: pointer; border: none; transition: all 0.18s;
+    }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+    .btn-danger  { background: var(--danger); color: #fff; }
+    .btn-danger:hover:not(:disabled) { opacity: 0.85; }
+    .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .btn-outline:hover:not(:disabled) { background: var(--bg); }
+    .btn-sm { padding: 5px 12px; font-size: 12px; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ── 拖拽上传区 ────────────────────────────────────── */
+    .dropzone {
+      border: 2px dashed var(--border); border-radius: var(--radius);
+      padding: 32px 20px; text-align: center; cursor: pointer;
+      transition: all 0.2s; background: #fafbff;
+    }
+    .dropzone:hover, .dropzone.dragover { border-color: var(--primary); background: rgba(79,110,247,0.05); }
+    .dropzone p { font-size: 14px; color: var(--muted); margin-top: 8px; }
+    .dropzone .drop-icon { font-size: 36px; }
+    #upload-input { display: none; }
+    #file-list { margin-top: 12px; }
+    .file-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(79,110,247,0.1); color: var(--primary);
+      border-radius: 20px; padding: 3px 10px; font-size: 12px; margin: 3px;
+    }
+    .file-chip .rm { cursor: pointer; font-size: 15px; line-height: 1; }
+
+    /* ── 进度条 ────────────────────────────────────────── */
+    .progress-wrap { margin-top: 12px; display: none; }
+    .progress-bar-bg { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+    .progress-bar    { height: 100%; background: var(--primary); border-radius: 4px; width: 0%; transition: width 0.4s; }
+    .progress-text   { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+    /* ── 消息提示 ──────────────────────────────────────── */
+    .msg { margin-top: 10px; padding: 10px 14px; border-radius: 6px; font-size: 13px; display: none; }
+    .msg-ok   { background: #eafaf1; color: #196f3d; border-left: 3px solid var(--success); }
+    .msg-err  { background: #fdedec; color: #922b21; border-left: 3px solid var(--danger); }
+    .msg-info { background: #eaf0ff; color: #1a3fa8; border-left: 3px solid var(--primary); }
+
+    /* ── 音色卡片网格 ──────────────────────────────────── */
+    #voice-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(280px,1fr)); gap: 16px; }
+    .voice-card {
+      background: #fafbff; border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 16px;
+    }
+    .voice-card .name { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+    .voice-card .meta { font-size: 12px; color: var(--muted); margin-bottom: 10px; line-height: 1.8; }
+    .voice-card .score-bar { height: 4px; background: var(--bg); border-radius: 2px; margin: 6px 0; }
+    .voice-card .score-fill { height: 100%; border-radius: 2px; }
+    .voice-card .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .empty-hint { text-align: center; color: var(--muted); padding: 40px 0; font-size: 14px; }
+
+    /* ── 双栏布局 ──────────────────────────────────────── */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+
+    /* ── 加载动画 ──────────────────────────────────────── */
+    .spinner {
+      display: inline-block; width: 16px; height: 16px;
+      border: 2px solid #fff; border-top-color: transparent;
+      border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── 音频播放器 ────────────────────────────────────── */
+    audio { width: 100%; margin-top: 10px; border-radius: 6px; display: none; }
+
+    /* ── section 间距 ──────────────────────────────────── */
+    .section-title { font-size: 14px; font-weight: 600; color: var(--muted); letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+
+<!-- ══════════ 顶部状态栏 ══════════ -->
+<header class="statusbar">
+  <h1>🎤 语音克隆服务</h1>
+  <div class="status-pills" id="status-pills">
+    <span class="pill pill-info"><span class="dot"></span> 加载中...</span>
+  </div>
+</header>
+
+<!-- ══════════ 主内容区 ══════════ -->
+<main class="main">
+
+  <!-- ── 上传训练区 + 文件夹训练区 ── -->
+  <div class="two-col">
+
+    <!-- 上传音频训练 -->
+    <div class="card">
+      <h2><span class="icon">📤</span> 上传音频训练</h2>
+
+      <div class="dropzone" id="dropzone" onclick="document.getElementById('upload-input').click()">
+        <div class="drop-icon">🎵</div>
+        <strong>点击或拖拽音频文件到此处</strong>
+        <p>支持 WAV / MP3 / M4A / FLAC，建议 5~30 秒，3~10 个文件</p>
+      </div>
+      <input type="file" id="upload-input" multiple accept=".wav,.mp3,.m4a,.flac,.ogg,.aac">
+      <div id="file-list"></div>
+
+      <label>音色名称</label>
+      <input type="text" id="upload-voice-name" placeholder="例如：小明普通话" maxlength="64">
+
+      <label>语言</label>
+      <select id="upload-language">
+        <option value="zh">中文</option>
+        <option value="en">English</option>
+      </select>
+
+      <div style="margin-top:16px;">
+        <button class="btn btn-primary" id="btn-upload-train" onclick="startUploadTrain()">
+          开始训练
+        </button>
+      </div>
+
+      <div class="progress-wrap" id="upload-progress">
+        <div class="progress-bar-bg"><div class="progress-bar" id="upload-bar"></div></div>
+        <div class="progress-text" id="upload-progress-text">处理中...</div>
+      </div>
+      <div class="msg" id="upload-msg"></div>
+    </div>
+
+    <!-- 本地文件夹训练 -->
+    <div class="card">
+      <h2><span class="icon">📁</span> 本地文件夹训练</h2>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">
+        将音频文件放在 <code style="background:#f0f2f7;padding:2px 6px;border-radius:4px;">data/samples/子文件夹名/</code> 下，
+        然后在此输入子文件夹名称开始训练。
+      </p>
+
+      <label>子文件夹名称</label>
+      <input type="text" id="folder-name" placeholder="例如：speaker_alice" maxlength="128">
+
+      <label>音色名称</label>
+      <input type="text" id="folder-voice-name" placeholder="例如：Alice 普通话" maxlength="64">
+
+      <label>语言</label>
+      <select id="folder-language">
+        <option value="zh">中文</option>
+        <option value="en">English</option>
+      </select>
+
+      <div style="margin-top:16px;">
+        <button class="btn btn-primary" id="btn-folder-train" onclick="startFolderTrain()">
+          开始训练
+        </button>
+      </div>
+
+      <div class="progress-wrap" id="folder-progress">
+        <div class="progress-bar-bg"><div class="progress-bar" id="folder-bar"></div></div>
+        <div class="progress-text" id="folder-progress-text">处理中...</div>
+      </div>
+      <div class="msg" id="folder-msg"></div>
+    </div>
+  </div>
+
+  <!-- ── 音色列表 ── -->
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h2 style="margin-bottom:0;"><span class="icon">🎭</span> 已训练音色</h2>
+      <button class="btn btn-outline btn-sm" onclick="loadVoices()">🔄 刷新</button>
+    </div>
+    <div id="voice-grid">
+      <div class="empty-hint">加载中...</div>
+    </div>
+  </div>
+
+  <!-- ── 测试合成区 ── -->
+  <div class="card">
+    <h2><span class="icon">🔊</span> 语音合成测试</h2>
+    <div class="two-col">
+      <div>
+        <label>选择音色</label>
+        <select id="test-voice-select">
+          <option value="">-- 请先选择音色 --</option>
+        </select>
+
+        <label>语速</label>
+        <input type="range" id="test-speed" min="0.5" max="2.0" step="0.1" value="1.0"
+          oninput="document.getElementById('speed-val').textContent=this.value"
+          style="width:100%;margin-top:6px;">
+        <span style="font-size:12px;color:var(--muted);">当前语速：<span id="speed-val">1.0</span>x</span>
+      </div>
+      <div>
+        <label>合成文字</label>
+        <textarea id="test-text" rows="4" maxlength="200"
+          placeholder="请输入要合成的文字（最多200字）">你好，这是一段语音克隆测试，请听一下效果如何。</textarea>
+      </div>
+    </div>
+    <div style="margin-top:14px;display:flex;align-items:center;gap:12px;">
+      <button class="btn btn-primary" id="btn-synthesize" onclick="synthesizeTest()">▶ 合成语音</button>
+      <span id="synth-status" style="font-size:13px;color:var(--muted);"></span>
+    </div>
+    <audio id="test-audio" controls></audio>
+    <div class="msg" id="synth-msg"></div>
+  </div>
+
+</main>
+
+<!-- ══════════ JavaScript ══════════ -->
+<script>
+// ── 全局状态 ──────────────────────────────────────────────────────────────
+const API = '';  // 同源，相对路径
+let selectedFiles = [];
+let taskPollers = {};  // { taskId: intervalId }
+
+// ── 工具函数 ──────────────────────────────────────────────────────────────
+function showMsg(id, text, type = 'ok') {
+  const el = document.getElementById(id);
+  el.className = `msg msg-${type}`;
+  el.textContent = text;
+  el.style.display = 'block';
+}
+function hideMsg(id) {
+  document.getElementById(id).style.display = 'none';
+}
+function setProgress(prefix, pct, text) {
+  document.getElementById(`${prefix}-progress`).style.display = 'block';
+  document.getElementById(`${prefix}-bar`).style.width = `${pct}%`;
+  document.getElementById(`${prefix}-progress-text`).textContent = text;
+}
+function hideProgress(prefix) {
+  document.getElementById(`${prefix}-progress`).style.display = 'none';
+}
+function setBtn(id, loading, text) {
+  const btn = document.getElementById(id);
+  btn.disabled = loading;
+  btn.innerHTML = loading ? `<span class="spinner"></span> ${text}` : text;
+}
+
+async function api(path, options = {}) {
+  const res = await fetch(API + path, options);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res;
+}
+
+// ── 状态栏：加载服务健康信息 ──────────────────────────────────────────────
+async function loadHealth() {
+  try {
+    const res = await api('/api/health');
+    const data = await res.json();
+
+    const pills = document.getElementById('status-pills');
+    let html = '';
+
+    // 服务状态
+    const statusClass = data.status === 'ok' ? 'pill-ok' : 'pill-warn';
+    html += `<span class="pill ${statusClass}"><span class="dot"></span> 服务${data.status === 'ok' ? '正常' : '降级'}</span>`;
+
+    // GPU 信息
+    if (data.gpu_info) {
+      const gpuClass = data.gpu_info.cuda_available ? 'pill-ok' : 'pill-warn';
+      const gpuText = data.gpu_info.cuda_available
+        ? `${data.gpu_info.name} (${data.gpu_info.total_memory_gb}GB)`
+        : 'CPU 模式';
+      html += `<span class="pill ${gpuClass}"><span class="dot"></span> ${gpuText}</span>`;
+    }
+
+    // 模型状态
+    const modelClass = data.model_loaded ? 'pill-ok' : 'pill-warn';
+    html += `<span class="pill ${modelClass}"><span class="dot"></span> 模型${data.model_loaded ? '已加载' : '未加载'}</span>`;
+
+    // 音色数量
+    html += `<span class="pill pill-info"><span class="dot"></span> ${data.voice_count} 个音色</span>`;
+
+    pills.innerHTML = html;
+  } catch (e) {
+    document.getElementById('status-pills').innerHTML =
+      `<span class="pill pill-err"><span class="dot"></span> 服务不可达</span>`;
+  }
+}
+
+// ── 文件上传拖拽逻辑 ──────────────────────────────────────────────────────
+const dropzone = document.getElementById('dropzone');
+const uploadInput = document.getElementById('upload-input');
+
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('dragover');
+  addFiles([...e.dataTransfer.files]);
+});
+uploadInput.addEventListener('change', () => addFiles([...uploadInput.files]));
+
+function addFiles(files) {
+  const allowed = ['.wav','.mp3','.m4a','.flac','.ogg','.aac','.wma'];
+  for (const f of files) {
+    const ext = f.name.slice(f.name.lastIndexOf('.')).toLowerCase();
+    if (!allowed.includes(ext)) { showMsg('upload-msg', `不支持的格式: ${f.name}`, 'err'); continue; }
+    if (selectedFiles.length >= 10) { showMsg('upload-msg', '最多选择 10 个文件', 'err'); break; }
+    if (!selectedFiles.find(sf => sf.name === f.name)) selectedFiles.push(f);
+  }
+  renderFileList();
+}
+
+function removeFile(name) {
+  selectedFiles = selectedFiles.filter(f => f.name !== name);
+  renderFileList();
+}
+
+function renderFileList() {
+  const list = document.getElementById('file-list');
+  if (!selectedFiles.length) { list.innerHTML = ''; return; }
+  list.innerHTML = selectedFiles.map(f =>
+    `<span class="file-chip">🎵 ${f.name} <span class="rm" onclick="removeFile('${f.name}')">✕</span></span>`
+  ).join('');
+}
+
+// ── 上传训练 ──────────────────────────────────────────────────────────────
+async function startUploadTrain() {
+  const voiceName = document.getElementById('upload-voice-name').value.trim();
+  const language = document.getElementById('upload-language').value;
+
+  if (!selectedFiles.length) return showMsg('upload-msg', '请先选择音频文件', 'err');
+  if (!voiceName) return showMsg('upload-msg', '请填写音色名称', 'err');
+
+  hideMsg('upload-msg');
+  setBtn('btn-upload-train', true, '上传中...');
+  setProgress('upload', 5, '正在上传文件...');
+
+  try {
+    const form = new FormData();
+    form.append('voice_name', voiceName);
+    form.append('language', language);
+    selectedFiles.forEach(f => form.append('files', f));
+
+    const res = await api('/api/train/from-upload', { method: 'POST', body: form });
+    const data = await res.json();
+
+    setProgress('upload', 15, '文件已上传，等待处理...');
+    setBtn('btn-upload-train', false, '开始训练');
+    showMsg('upload-msg', `训练任务已提交 (ID: ${data.task_id.slice(0,8)}...)`, 'info');
+
+    // 开始轮询任务状态
+    pollTask(data.task_id, 'upload');
+    selectedFiles = [];
+    renderFileList();
+  } catch (e) {
+    setBtn('btn-upload-train', false, '开始训练');
+    hideProgress('upload');
+    showMsg('upload-msg', `提交失败: ${e.message}`, 'err');
+  }
+}
+
+// ── 文件夹训练 ────────────────────────────────────────────────────────────
+async function startFolderTrain() {
+  const folderName = document.getElementById('folder-name').value.trim();
+  const voiceName = document.getElementById('folder-voice-name').value.trim();
+  const language = document.getElementById('folder-language').value;
+
+  if (!folderName) return showMsg('folder-msg', '请填写子文件夹名称', 'err');
+  if (!voiceName) return showMsg('folder-msg', '请填写音色名称', 'err');
+
+  hideMsg('folder-msg');
+  setBtn('btn-folder-train', true, '提交中...');
+  setProgress('folder', 5, '正在提交任务...');
+
+  try {
+    const res = await api('/api/train/from-folder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder_name: folderName, voice_name: voiceName, language }),
+    });
+    const data = await res.json();
+
+    setProgress('folder', 15, '任务已提交，等待处理...');
+    setBtn('btn-folder-train', false, '开始训练');
+    showMsg('folder-msg', `训练任务已提交 (ID: ${data.task_id.slice(0,8)}...)`, 'info');
+
+    pollTask(data.task_id, 'folder');
+  } catch (e) {
+    setBtn('btn-folder-train', false, '开始训练');
+    hideProgress('folder');
+    showMsg('folder-msg', `提交失败: ${e.message}`, 'err');
+  }
+}
+
+// ── 任务状态轮询 ──────────────────────────────────────────────────────────
+function pollTask(taskId, prefix) {
+  if (taskPollers[taskId]) clearInterval(taskPollers[taskId]);
+
+  taskPollers[taskId] = setInterval(async () => {
+    try {
+      const res = await api(`/api/train/${taskId}/status`);
+      const task = await res.json();
+
+      setProgress(prefix, task.progress, task.message);
+
+      if (task.status === 'done') {
+        clearInterval(taskPollers[taskId]);
+        hideProgress(prefix);
+        showMsg(prefix + '-msg', `✅ 训练完成！音色 ID: ${task.voice_id}`, 'ok');
+        loadVoices();
+        loadHealth();
+      } else if (task.status === 'failed') {
+        clearInterval(taskPollers[taskId]);
+        hideProgress(prefix);
+        showMsg(prefix + '-msg', `❌ 训练失败: ${task.error}`, 'err');
+      }
+    } catch (e) {
+      // 网络抖动，继续轮询
+    }
+  }, 2000);
+}
+
+// ── 加载音色列表 ──────────────────────────────────────────────────────────
+async function loadVoices() {
+  const grid = document.getElementById('voice-grid');
+  grid.innerHTML = '<div class="empty-hint">加载中...</div>';
+
+  try {
+    const res = await api('/api/voices/');
+    const data = await res.json();
+
+    // 同步更新测试区的音色选择器
+    const sel = document.getElementById('test-voice-select');
+    sel.innerHTML = '<option value="">-- 请先选择音色 --</option>';
+
+    if (!data.voices || data.voices.length === 0) {
+      grid.innerHTML = '<div class="empty-hint">暂无音色。请上传音频或使用本地文件夹开始训练。</div>';
+      return;
+    }
+
+    grid.innerHTML = data.voices.map(v => {
+      const score = Math.round(v.quality_score * 100);
+      const scoreColor = score >= 70 ? '#27ae60' : score >= 40 ? '#f39c12' : '#e74c3c';
+      const date = new Date(v.created_at).toLocaleString('zh-CN');
+      const sizeMB = v.voicepack_size_bytes ? (v.voicepack_size_bytes / 1024 / 1024).toFixed(1) : '-';
+
+      return `
+        <div class="voice-card" data-id="${v.voice_id}">
+          <div class="name">🎭 ${escHtml(v.voice_name)}</div>
+          <div class="meta">
+            🆔 ${v.voice_id.slice(0,8)}...<br>
+            📅 ${date}<br>
+            🎤 ${v.sample_count} 段 · ${v.total_duration_seconds.toFixed(1)}s<br>
+            💾 ${sizeMB} MB · ${v.language === 'zh' ? '中文' : 'English'}
+          </div>
+          <div style="font-size:12px;color:var(--muted);">音质评分</div>
+          <div class="score-bar">
+            <div class="score-fill" style="width:${score}%;background:${scoreColor};"></div>
+          </div>
+          <div style="font-size:12px;color:${scoreColor};margin-bottom:10px;">${score} / 100</div>
+          <div class="actions">
+            <button class="btn btn-outline btn-sm" onclick="selectAndTest('${v.voice_id}','${escHtml(v.voice_name)}')">▶ 测试</button>
+            <button class="btn btn-outline btn-sm" onclick="downloadVoice('${v.voice_id}','${escHtml(v.voice_name)}')">⬇ 下载</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteVoice('${v.voice_id}','${escHtml(v.voice_name)}')">🗑 删除</button>
+          </div>
+        </div>`;
+    }).join('');
+
+    // 更新测试区选择器
+    data.voices.forEach(v => {
+      const opt = document.createElement('option');
+      opt.value = v.voice_id;
+      opt.textContent = `${v.voice_name} (${v.voice_id.slice(0,8)}...)`;
+      sel.appendChild(opt);
+    });
+
+  } catch (e) {
+    grid.innerHTML = `<div class="empty-hint" style="color:var(--danger);">加载失败: ${e.message}</div>`;
+  }
+}
+
+// ── 音色操作 ──────────────────────────────────────────────────────────────
+function selectAndTest(voiceId, voiceName) {
+  document.getElementById('test-voice-select').value = voiceId;
+  document.querySelector('.main').scrollTo(0, 9999);
+  // 滚动到测试区
+  document.getElementById('test-audio').parentElement.scrollIntoView({ behavior: 'smooth' });
+}
+
+function downloadVoice(voiceId, voiceName) {
+  const a = document.createElement('a');
+  a.href = `${API}/api/voices/${voiceId}/download`;
+  a.download = `${voiceId}.voicepack`;
+  a.click();
+}
+
+async function deleteVoice(voiceId, voiceName) {
+  if (!confirm(`确定要删除音色「${voiceName}」吗？此操作不可撤销。`)) return;
+  try {
+    await api(`/api/voices/${voiceId}`, { method: 'DELETE' });
+    loadVoices();
+    loadHealth();
+  } catch (e) {
+    alert(`删除失败: ${e.message}`);
+  }
+}
+
+// ── 测试语音合成 ──────────────────────────────────────────────────────────
+async function synthesizeTest() {
+  const voiceId = document.getElementById('test-voice-select').value;
+  const text = document.getElementById('test-text').value.trim();
+  const speed = parseFloat(document.getElementById('test-speed').value);
+
+  if (!voiceId) return showMsg('synth-msg', '请先选择音色', 'err');
+  if (!text) return showMsg('synth-msg', '请输入合成文字', 'err');
+
+  hideMsg('synth-msg');
+  const audio = document.getElementById('test-audio');
+  audio.style.display = 'none';
+  setBtn('btn-synthesize', true, '合成中...');
+  document.getElementById('synth-status').textContent = '正在合成，请稍候...';
+
+  try {
+    const res = await api(`/api/voices/${voiceId}/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, speed, language: 'zh' }),
+    });
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    audio.src = url;
+    audio.style.display = 'block';
+    audio.play();
+    document.getElementById('synth-status').textContent = '合成完成！';
+  } catch (e) {
+    showMsg('synth-msg', `合成失败: ${e.message}`, 'err');
+    document.getElementById('synth-status').textContent = '';
+  } finally {
+    setBtn('btn-synthesize', false, '▶ 合成语音');
+  }
+}
+
+// ── XSS 防御 ──────────────────────────────────────────────────────────────
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── 初始化 ────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  loadHealth();
+  loadVoices();
+  // 每30秒刷新状态栏
+  setInterval(loadHealth, 30000);
+});
+</script>
+</body>
+</html>
