@@ -1,26 +1,10 @@
 name: voice-cloning
 
-# conda 只负责安装：Python 本身 + 用 conda 装更稳定的音频/科学计算库
-# PyTorch 及所有 ML 相关包统一由 pip 安装（见 requirements-pip.txt）
-# 这样可以避免 conda pytorch channel 与 pip 的版本冲突
-
 channels:
   - conda-forge
   - defaults
 
 dependencies:
   - python=3.10
-
-  # 科学计算（conda-forge 版本依赖链更完整）
-  - numpy>=1.24
-  - scipy>=1.10
-
-  # 音频处理（librosa/soundfile 在 conda-forge 上依赖最完整）
-  - librosa>=0.10
-  - soundfile>=0.12
-
-  # ffmpeg 命令行二进制工具（conda-forge 提供 Windows 预编译版）
-  - ffmpeg>=6.0
-
-  # pip 工具本身
   - pip>=23.0
+  - ffmpeg>=6.0

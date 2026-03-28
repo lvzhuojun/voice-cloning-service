@@ -1,47 +1,35 @@
-# ══════════════════════════════════════════════════════════════════════════════
-# requirements-pip.txt
-# 在 conda activate voice-cloning 之后执行：
-#   pip install -r requirements-pip.txt
-#
-# 安装顺序：install.bat 会先单独装 PyTorch，再装本文件其余内容
-# ══════════════════════════════════════════════════════════════════════════════
+# All pip dependencies (install AFTER PyTorch)
+# PyTorch is installed separately in install.bat via --index-url
 
-# ── PyTorch 2.7 稳定版（支持 RTX 5060 Blackwell sm_120）─────────────────────
-# 注意：PyTorch 本身不在本文件里，由 install.bat 单独用 --index-url 安装
-# 原因：--index-url 会覆盖整个 pip 源，导致下方其他包也去 pytorch CDN 找，找不到报错
-# install.bat 中的安装命令：
-#   pip install torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+# Audio processing
+librosa>=0.10.0
+soundfile>=0.12.0
+numpy>=1.24.0
+scipy>=1.10.0
+ffmpeg-python>=0.2.0
 
-# ── Web 框架 ──────────────────────────────────────────────────────────────────
+# Web framework
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 python-multipart>=0.0.9
 aiofiles>=23.2.0
 
-# ── 配置与数据验证 ─────────────────────────────────────────────────────────────
+# Config & validation
 pydantic>=2.6.0
 pydantic-settings>=2.2.0
 python-dotenv>=1.0.0
 
-# ── HuggingFace 生态 ───────────────────────────────────────────────────────────
+# HuggingFace
 huggingface_hub>=0.22.0
 transformers>=4.40.0
 accelerate>=0.29.0
 
-# ── CosyVoice3 运行时依赖 ──────────────────────────────────────────────────────
+# CosyVoice3 runtime
 omegaconf>=2.3.0
-hydra-core>=1.3.0
 einops>=0.7.0
-conformer>=0.3.2
 diffusers>=0.27.0
 
-# ── 音频额外处理 ───────────────────────────────────────────────────────────────
-ffmpeg-python>=0.2.0
-# webrtcvad 在 Windows 上需要 Visual C++ Build Tools，如果装失败可以注释掉这行
-# webrtcvad>=2.0.10
-
-# ── 工具库 ─────────────────────────────────────────────────────────────────────
+# Utils
 tqdm>=4.66.0
 requests>=2.31.0
 httpx>=0.27.0
-soundfile>=0.12.0
