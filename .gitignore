@@ -1,4 +1,7 @@
-# 预训练模型（体积过大，不纳入版本控制）
+# Claude Code local settings (never push to remote)
+.claude/
+
+# Pretrained models (too large for version control)
 storage/pretrained_models/
 
 # 用户上传的临时音频

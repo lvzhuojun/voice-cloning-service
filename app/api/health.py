@@ -1,6 +1,6 @@
 """
-健康检查 API 路由
-提供服务状态、GPU 信息、模型加载情况等运行时信息。
+Health check API router
+Provides runtime information including service status, GPU info, and model loading state.
 """
 
 import logging
@@ -14,12 +14,12 @@ from app.models.schemas import GPUInfo, HealthResponse
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# 服务启动时间（在 main.py 中设置）
+# Service start time (set in main.py)
 _service_start_time: float = time.time()
 
 
 def set_start_time(t: float) -> None:
-    """设置服务启动时间（由 main.py 在 startup 事件中调用）"""
+    """Set the service start time (called by main.py in the startup event)"""
     global _service_start_time
     _service_start_time = t
 
@@ -27,21 +27,21 @@ def set_start_time(t: float) -> None:
 @router.get(
     "/health",
     response_model=HealthResponse,
-    summary="服务健康检查",
-    description="返回服务状态、GPU 信息、已加载模型和已有音色数量",
+    summary="Service health check",
+    description="Returns service status, GPU info, loaded model state, and the number of available voices",
 )
 async def health_check() -> HealthResponse:
     """
-    健康检查端点。
+    Health check endpoint.
 
     Returns:
-        HealthResponse: 包含服务状态、GPU 信息、音色数量等
+        HealthResponse: Contains service status, GPU info, voice count, etc.
     """
     from app.config import settings
     from app.core.tts_engine import TTSEngine
     from app.core.voicepack_manager import VoicePackManager
 
-    # ── GPU 信息 ─────────────────────────────────────────────────────────────
+    # ── GPU information ───────────────────────────────────────────────────────
     gpu_info: Optional[GPUInfo] = None
     try:
         import torch
@@ -55,36 +55,36 @@ async def health_check() -> HealthResponse:
             )
         else:
             gpu_info = GPUInfo(
-                name="无 GPU",
+                name="No GPU",
                 compute_capability="N/A",
                 total_memory_gb=0.0,
                 cuda_available=False,
             )
     except Exception as e:
-        logger.warning(f"获取 GPU 信息失败: {e}")
+        logger.warning(f"Failed to retrieve GPU info: {e}")
 
-    # ── 模型加载状态 ──────────────────────────────────────────────────────────
+    # ── Model loading state ───────────────────────────────────────────────────
     engine = TTSEngine.get_instance(
         model_dir=settings.model_dir,
         storage_dir=settings.storage_dir,
     )
     model_loaded = engine.is_model_loaded()
 
-    # ── 已有音色数量 ──────────────────────────────────────────────────────────
+    # ── Number of available voices ────────────────────────────────────────────
     try:
         manager = VoicePackManager(storage_dir=settings.storage_dir)
         voice_count = len(manager.list_all())
     except Exception:
         voice_count = 0
 
-    # ── 运行时长 ──────────────────────────────────────────────────────────────
+    # ── Uptime ────────────────────────────────────────────────────────────────
     uptime = time.time() - _service_start_time
 
-    # ── 服务状态判断 ──────────────────────────────────────────────────────────
+    # ── Service status determination ──────────────────────────────────────────
     if model_loaded and (gpu_info is None or gpu_info.cuda_available):
         status = "ok"
     elif not model_loaded:
-        status = "degraded"  # 模型未加载，功能受限
+        status = "degraded"  # Model not loaded; functionality is limited
     else:
         status = "ok"
 

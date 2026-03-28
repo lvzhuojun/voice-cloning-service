@@ -1,12 +1,13 @@
 """
-TTS 推理引擎封装
-封装 CosyVoice3 推理接口，支持从 .voicepack 加载音色后合成语音。
+TTS inference engine wrapper
+Wraps the CosyVoice3 inference interface; supports loading a voice from a .voicepack
+and synthesizing speech.
 
-特性：
-- 模型单例：全局只加载一次 CosyVoice3，复用推理资源
-- 支持普通合成（返回完整 WAV bytes）
-- 支持流式合成（生成器，逐块 yield WAV 数据）
-- 参数控制：语速、语言
+Features:
+- Model singleton: CosyVoice3 is loaded only once globally, reusing inference resources
+- Standard synthesis: returns complete WAV bytes
+- Streaming synthesis: generator that yields WAV data in chunks
+- Parameter control: speech speed, language
 """
 
 from __future__ import annotations
@@ -28,21 +29,22 @@ from app.core.voicepack_manager import VoicePackManager
 
 logger = logging.getLogger(__name__)
 
-# ── 合成输出参数 ───────────────────────────────────────────────────────────────
-OUTPUT_SAMPLE_RATE = 22050      # CosyVoice3 输出采样率（Hz）
-STREAM_CHUNK_SAMPLES = 4096     # 流式合成每块的样本数
+# ── Synthesis output parameters ───────────────────────────────────────────────
+OUTPUT_SAMPLE_RATE = 22050      # CosyVoice3 output sample rate (Hz)
+STREAM_CHUNK_SAMPLES = 4096     # Number of samples per chunk in streaming synthesis
 
 
 class TTSEngine:
     """
-    CosyVoice3 TTS 推理引擎（单例模式）。
+    CosyVoice3 TTS inference engine (singleton pattern).
 
-    使用单例确保模型只加载一次，多次合成请求复用同一模型实例。
-    线程安全：使用 threading.Lock 防止并发推理冲突。
+    Uses a singleton to ensure the model is loaded only once;
+    multiple synthesis requests reuse the same model instance.
+    Thread-safe: uses threading.Lock to prevent concurrent inference conflicts.
 
-    使用方式:
+    Usage:
         engine = TTSEngine.get_instance(model_dir="storage/pretrained_models")
-        wav_bytes = engine.synthesize("你好世界", voice_id="xxx")
+        wav_bytes = engine.synthesize("Hello world", voice_id="xxx")
     """
 
     _instance: Optional["TTSEngine"] = None
@@ -55,23 +57,23 @@ class TTSEngine:
         device: Optional[str] = None,
     ) -> None:
         """
-        初始化 TTS 引擎（通常不直接调用，使用 get_instance()）。
+        Initialize the TTS engine (usually not called directly; use get_instance()).
 
         Args:
-            model_dir: 预训练模型根目录路径
-            storage_dir: 存储根目录（用于加载音色包）
-            device: 推理设备（"cuda"/"cpu"，None 时自动选择）
+            model_dir: Pretrained model root directory path
+            storage_dir: Storage root directory (used for loading voice packs)
+            device: Inference device ("cuda"/"cpu"; auto-selected if None)
         """
         self.model_dir = Path(model_dir)
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._cosyvoice = None          # CosyVoice3 模型实例
-        self._model_loaded = False      # 模型是否已加载
-        self._inference_lock = threading.Lock()  # 推理互斥锁
+        self._cosyvoice = None          # CosyVoice3 model instance
+        self._model_loaded = False      # Whether the model is loaded
+        self._inference_lock = threading.Lock()  # Inference mutex lock
 
-        # 音色包管理器（用于加载 voice embedding 和参考音频）
+        # Voice pack manager (used to load voice embeddings and reference audio)
         self.voicepack_manager = VoicePackManager(storage_dir=storage_dir)
 
-        logger.info(f"TTSEngine 初始化 | 设备: {self.device} | 模型目录: {model_dir}")
+        logger.info(f"TTSEngine initialized | Device: {self.device} | Model dir: {model_dir}")
 
     @classmethod
     def get_instance(
@@ -81,17 +83,17 @@ class TTSEngine:
         device: Optional[str] = None,
     ) -> "TTSEngine":
         """
-        获取 TTSEngine 单例实例（线程安全）。
+        Get the TTSEngine singleton instance (thread-safe).
 
-        首次调用时创建实例，后续调用直接返回已有实例。
+        Creates the instance on the first call; subsequent calls return the existing instance.
 
         Args:
-            model_dir: 预训练模型根目录路径
-            storage_dir: 存储根目录
-            device: 推理设备
+            model_dir: Pretrained model root directory path
+            storage_dir: Storage root directory
+            device: Inference device
 
         Returns:
-            TTSEngine: 单例实例
+            TTSEngine: Singleton instance
         """
         if cls._instance is None:
             with cls._lock:
@@ -105,17 +107,18 @@ class TTSEngine:
 
     def load_model(self) -> bool:
         """
-        加载 CosyVoice3 模型（如已加载则跳过）。
+        Load the CosyVoice3 model (skipped if already loaded).
 
-        加载顺序：
-        1. 尝试加载 Fun-CosyVoice3-0.5B-2512（完整模型）
-        2. 若模型未下载，标记为未加载状态（合成时会返回友好错误）
+        Loading order:
+        1. Try to load Fun-CosyVoice3-0.5B-2512 (full model)
+        2. If the model has not been downloaded, mark as not loaded
+           (synthesis will return a friendly error)
 
         Returns:
-            bool: 模型加载成功返回 True
+            bool: True if the model loaded successfully
 
         Raises:
-            RuntimeError: 模型加载过程中出现严重错误
+            RuntimeError: A critical error occurred during model loading
         """
         if self._model_loaded:
             return True
@@ -128,31 +131,31 @@ class TTSEngine:
 
             if not cosyvoice_dir.exists():
                 logger.warning(
-                    f"模型目录不存在: {cosyvoice_dir}。"
-                    "请先运行 python setup/download_models.py"
+                    f"Model directory does not exist: {cosyvoice_dir}. "
+                    "Please run python setup/download_models.py first."
                 )
                 return False
 
-            # 尝试通过 CosyVoice Python 模块加载
+            # Try loading via the CosyVoice Python module
             try:
                 self._load_cosyvoice_model(str(cosyvoice_dir))
                 self._model_loaded = True
-                logger.info("CosyVoice3 模型加载成功")
+                logger.info("CosyVoice3 model loaded successfully")
                 return True
             except ImportError as e:
-                logger.warning(f"CosyVoice 模块未找到: {e}")
-                logger.warning("请参考 README 安装 CosyVoice 子模块")
+                logger.warning(f"CosyVoice module not found: {e}")
+                logger.warning("Please refer to the README to install the CosyVoice submodule.")
                 return False
             except Exception as e:
-                logger.error(f"CosyVoice3 模型加载失败: {e}")
+                logger.error(f"CosyVoice3 model loading failed: {e}")
                 return False
 
     def is_model_loaded(self) -> bool:
         """
-        检查模型是否已成功加载。
+        Check whether the model has been successfully loaded.
 
         Returns:
-            bool: 已加载返回 True
+            bool: True if loaded
         """
         return self._model_loaded
 
@@ -164,43 +167,43 @@ class TTSEngine:
         language: str = "zh",
     ) -> bytes:
         """
-        从指定音色合成语音，返回完整 WAV 文件的 bytes。
+        Synthesize speech from the specified voice and return the complete WAV file as bytes.
 
-        流程：
-        1. 加载指定 voice_id 的 .voicepack（获取 embedding 和参考音频）
-        2. 调用 CosyVoice3 的零样本克隆推理接口
-        3. 将生成的音频合并为完整 WAV bytes 返回
+        Workflow:
+        1. Load the .voicepack for the specified voice_id (obtain embedding and reference audio)
+        2. Call CosyVoice3's zero-shot cloning inference interface
+        3. Merge the generated audio into complete WAV bytes and return
 
         Args:
-            text: 要合成的文字（1~200 字）
-            voice_id: 音色 UUID，对应 storage/voicepacks/{voice_id}.voicepack
-            speed: 语速（0.5=慢，1.0=正常，2.0=快）
-            language: 合成语言（"zh"=中文，"en"=英文）
+            text: Text to synthesize (1~200 characters)
+            voice_id: Voice UUID corresponding to storage/voicepacks/{voice_id}.voicepack
+            speed: Speech speed (0.5=slow, 1.0=normal, 2.0=fast)
+            language: Synthesis language ("zh"=Chinese, "en"=English)
 
         Returns:
-            bytes: WAV 格式的音频二进制数据
+            bytes: WAV format audio binary data
 
         Raises:
-            FileNotFoundError: 音色包不存在
-            RuntimeError: 模型未加载或推理失败
-            ValueError: 参数不合法
+            FileNotFoundError: Voice pack does not exist
+            RuntimeError: Model not loaded or inference failed
+            ValueError: Invalid parameters
         """
         if not text or not text.strip():
-            raise ValueError("合成文字不能为空")
+            raise ValueError("Synthesis text must not be empty")
 
         if not (0.5 <= speed <= 2.0):
-            raise ValueError(f"语速 speed 必须在 0.5~2.0 之间，当前: {speed}")
+            raise ValueError(f"Speed must be between 0.5 and 2.0; got: {speed}")
 
         if not self._model_loaded:
-            # 尝试延迟加载
+            # Try lazy loading
             if not self.load_model():
                 raise RuntimeError(
-                    "TTS 模型未加载。请先运行 setup/download_models.py 下载模型，"
-                    "然后重启服务。"
+                    "TTS model is not loaded. Please run setup/download_models.py to download "
+                    "the model, then restart the service."
                 )
 
-        # 加载音色包
-        logger.info(f"合成语音 | voice_id: {voice_id} | 文字长度: {len(text)}")
+        # Load voice pack
+        logger.info(f"Synthesizing speech | voice_id: {voice_id} | Text length: {len(text)}")
         embedding, reference_audio, ref_sr, metadata, _ = self.voicepack_manager.unpack(voice_id)
 
         try:
@@ -216,21 +219,21 @@ class TTSEngine:
                     )
                 )
         except Exception as e:
-            logger.error(f"TTS 推理失败: {e}")
-            raise RuntimeError(f"语音合成失败: {e}") from e
+            logger.error(f"TTS inference failed: {e}")
+            raise RuntimeError(f"Speech synthesis failed: {e}") from e
 
-        # 合并所有音频块
+        # Merge all audio chunks
         if not audio_chunks:
-            raise RuntimeError("推理返回了空音频")
+            raise RuntimeError("Inference returned empty audio")
 
         full_audio = np.concatenate(audio_chunks)
 
-        # 将 numpy 数组转为 WAV bytes
+        # Convert numpy array to WAV bytes
         wav_bytes = self._numpy_to_wav_bytes(full_audio, OUTPUT_SAMPLE_RATE)
         logger.info(
-            f"合成完成 | voice_id: {voice_id} | "
-            f"时长: {len(full_audio)/OUTPUT_SAMPLE_RATE:.2f}s | "
-            f"大小: {len(wav_bytes)/1024:.1f} KB"
+            f"Synthesis complete | voice_id: {voice_id} | "
+            f"Duration: {len(full_audio)/OUTPUT_SAMPLE_RATE:.2f}s | "
+            f"Size: {len(wav_bytes)/1024:.1f} KB"
         )
         return wav_bytes
 
@@ -242,35 +245,35 @@ class TTSEngine:
         language: str = "zh",
     ) -> Generator[bytes, None, None]:
         """
-        流式合成语音，生成器函数，逐块 yield WAV chunk bytes。
+        Stream speech synthesis; generator function that yields WAV chunk bytes.
 
-        适用于：
-        - WebSocket 实时推流
-        - HTTP Streaming Response（长文本逐块返回）
+        Use cases:
+        - WebSocket real-time streaming
+        - HTTP Streaming Response (return long text in chunks)
 
-        每个 yield 的 bytes 是一个 WAV chunk（包含 PCM 数据）。
-        消费方应将所有 chunk 拼接后得到完整 WAV 文件，
-        或直接将每个 chunk 送入音频流播放器。
+        Each yielded bytes object is a WAV chunk (containing PCM data).
+        The consumer should concatenate all chunks to get a complete WAV file,
+        or feed each chunk directly into a streaming audio player.
 
         Args:
-            text: 要合成的文字
-            voice_id: 音色 UUID
-            speed: 语速（0.5~2.0）
-            language: 合成语言（"zh"/"en"）
+            text: Text to synthesize
+            voice_id: Voice UUID
+            speed: Speech speed (0.5~2.0)
+            language: Synthesis language ("zh"/"en")
 
         Yields:
-            bytes: WAV 数据块（PCM 16-bit，22050Hz，单声道）
+            bytes: WAV data chunks (PCM 16-bit, 22050 Hz, mono)
 
         Raises:
-            FileNotFoundError: 音色包不存在
-            RuntimeError: 模型未加载或推理失败
+            FileNotFoundError: Voice pack does not exist
+            RuntimeError: Model not loaded or inference failed
         """
         if not self._model_loaded:
             if not self.load_model():
-                raise RuntimeError("TTS 模型未加载，请先下载模型后重启服务")
+                raise RuntimeError("TTS model is not loaded. Please download the model and restart the service.")
 
         embedding, reference_audio, ref_sr, metadata, _ = self.voicepack_manager.unpack(voice_id)
-        logger.info(f"流式合成开始 | voice_id: {voice_id}")
+        logger.info(f"Streaming synthesis started | voice_id: {voice_id}")
 
         try:
             for chunk in self._run_inference(
@@ -281,51 +284,51 @@ class TTSEngine:
                 speed=speed,
                 language=language,
             ):
-                # 每个 chunk 转为 WAV bytes（不含 WAV header，纯 PCM）
+                # Convert each chunk to WAV bytes (no WAV header; raw PCM)
                 chunk_int16 = (chunk * 32767).astype(np.int16)
                 yield chunk_int16.tobytes()
 
         except Exception as e:
-            logger.error(f"流式 TTS 推理失败: {e}")
-            raise RuntimeError(f"流式语音合成失败: {e}") from e
+            logger.error(f"Streaming TTS inference failed: {e}")
+            raise RuntimeError(f"Streaming speech synthesis failed: {e}") from e
 
-        logger.info(f"流式合成完成 | voice_id: {voice_id}")
+        logger.info(f"Streaming synthesis complete | voice_id: {voice_id}")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # 内部方法
+    # Internal methods
     # ══════════════════════════════════════════════════════════════════════════
 
     def _load_cosyvoice_model(self, cosyvoice_dir: str) -> None:
         """
-        加载 CosyVoice3 Python 模型。
+        Load the CosyVoice3 Python model.
 
         Args:
-            cosyvoice_dir: CosyVoice3 模型目录路径
+            cosyvoice_dir: CosyVoice3 model directory path
 
         Raises:
-            ImportError: CosyVoice 模块未安装
-            RuntimeError: 模型初始化失败
+            ImportError: CosyVoice module not installed
+            RuntimeError: Model initialization failed
         """
         import sys
 
-        # 若 CosyVoice 从源码安装，将其目录加入 Python 路径
+        # If CosyVoice is installed from source, add its directory to the Python path
         cosyvoice_src = Path(__file__).parents[3] / "CosyVoice"
         if cosyvoice_src.exists() and str(cosyvoice_src) not in sys.path:
             sys.path.insert(0, str(cosyvoice_src))
-            logger.debug(f"已将 CosyVoice 源码路径加入 sys.path: {cosyvoice_src}")
+            logger.debug(f"Added CosyVoice source path to sys.path: {cosyvoice_src}")
 
         try:
             from cosyvoice.cli.cosyvoice import CosyVoice
         except ImportError:
             raise ImportError(
-                "CosyVoice 模块未找到。请参考 README 克隆 CosyVoice 子模块：\n"
+                "CosyVoice module not found. Please refer to the README to clone the CosyVoice submodule:\n"
                 "  git submodule add https://github.com/FunAudioLLM/CosyVoice.git\n"
                 "  git submodule update --init --recursive"
             )
 
-        logger.info(f"正在加载 CosyVoice3 模型: {cosyvoice_dir}")
+        logger.info(f"Loading CosyVoice3 model: {cosyvoice_dir}")
         self._cosyvoice = CosyVoice(cosyvoice_dir)
-        logger.info("CosyVoice3 模型加载完成")
+        logger.info("CosyVoice3 model loaded successfully")
 
     def _run_inference(
         self,
@@ -337,31 +340,31 @@ class TTSEngine:
         language: str,
     ) -> Generator[np.ndarray, None, None]:
         """
-        执行 CosyVoice3 推理，yield 音频数组块。
+        Run CosyVoice3 inference; yield audio array chunks.
 
         Args:
-            text: 合成文字
-            embedding: speaker embedding 向量
-            reference_audio: 参考音频数组
-            ref_sample_rate: 参考音频采样率
-            speed: 语速
-            language: 语言
+            text: Synthesis text
+            embedding: Speaker embedding vector
+            reference_audio: Reference audio array
+            ref_sample_rate: Reference audio sample rate
+            speed: Speech speed
+            language: Language
 
         Yields:
-            np.ndarray: float32 音频数组块
+            np.ndarray: float32 audio array chunks
         """
         if self._cosyvoice is None:
-            raise RuntimeError("CosyVoice3 模型未初始化")
+            raise RuntimeError("CosyVoice3 model is not initialized")
 
-        # 将参考音频写入临时文件（CosyVoice 接口需要文件路径）
+        # Write reference audio to a temporary file (CosyVoice interface requires a file path)
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             sf.write(tmp.name, reference_audio, ref_sample_rate, subtype="PCM_16")
             tmp_path = tmp.name
 
         try:
-            # ── 调用 CosyVoice3 零样本克隆推理 ─────────────────────────────
-            # inference_zero_shot：输入文字 + 参考音频 + speaker embedding
-            # 返回包含 "tts_speech" 键的字典生成器
+            # ── Call CosyVoice3 zero-shot cloning inference ───────────────────
+            # inference_zero_shot: input text + reference audio + speaker embedding
+            # Returns a dictionary generator containing the "tts_speech" key
             for output in self._cosyvoice.inference_zero_shot(
                 tts_text=text,
                 prompt_speech_16k=tmp_path,
@@ -375,8 +378,8 @@ class TTSEngine:
                     yield chunk.astype(np.float32)
 
         except AttributeError:
-            # 模型接口可能因版本差异而不同，尝试备用接口
-            logger.warning("inference_zero_shot 接口不可用，尝试 inference_instruct 接口")
+            # The model interface may differ across versions; try the fallback interface
+            logger.warning("inference_zero_shot interface unavailable; trying inference_instruct interface")
             yield from self._run_inference_fallback(text, tmp_path, embedding, speed)
         finally:
             os.unlink(tmp_path)
@@ -389,20 +392,20 @@ class TTSEngine:
         speed: float,
     ) -> Generator[np.ndarray, None, None]:
         """
-        备用推理接口（当主接口不可用时）。
-        生成一段静音占位音频，避免服务崩溃。
+        Fallback inference interface (used when the primary interface is unavailable).
+        Generates a silent placeholder audio to prevent service crashes.
 
         Args:
-            text: 合成文字
-            ref_audio_path: 参考音频路径
-            embedding: speaker embedding
-            speed: 语速
+            text: Synthesis text
+            ref_audio_path: Reference audio path
+            embedding: Speaker embedding
+            speed: Speech speed
 
         Yields:
-            np.ndarray: 静音音频块（占位）
+            np.ndarray: Silent audio chunk (placeholder)
         """
-        logger.warning("使用备用推理接口（生成静音）")
-        # 估算时长：平均每个中文字 0.3 秒，加速/减速调整
+        logger.warning("Using fallback inference interface (generating silence)")
+        # Estimate duration: approximately 0.3 s per character, adjusted for speed
         estimated_duration = len(text) * 0.3 / speed
         samples = int(estimated_duration * OUTPUT_SAMPLE_RATE)
         silence = np.zeros(samples, dtype=np.float32)
@@ -411,14 +414,14 @@ class TTSEngine:
     @staticmethod
     def _numpy_to_wav_bytes(audio: np.ndarray, sample_rate: int) -> bytes:
         """
-        将 numpy 音频数组转换为 WAV 格式的 bytes。
+        Convert a numpy audio array to WAV format bytes.
 
         Args:
-            audio: float32 音频数组，值域 [-1.0, 1.0]
-            sample_rate: 采样率（Hz）
+            audio: float32 audio array, values in [-1.0, 1.0]
+            sample_rate: Sample rate (Hz)
 
         Returns:
-            bytes: 完整的 WAV 文件 bytes（含 WAV header）
+            bytes: Complete WAV file bytes (including WAV header)
         """
         buf = io.BytesIO()
         sf.write(buf, audio, sample_rate, format="WAV", subtype="PCM_16")

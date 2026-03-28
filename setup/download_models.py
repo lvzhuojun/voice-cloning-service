@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-模型下载脚本
-从 HuggingFace（或镜像源）下载 Fun-CosyVoice3-0.5B-2512 预训练模型。
-支持通过 HF_ENDPOINT 环境变量配置镜像源，国内环境推荐使用 hf-mirror.com。
+Model download script
+Downloads the Fun-CosyVoice3-0.5B-2512 pretrained model from HuggingFace (or a mirror).
+Supports configuring a mirror via the HF_ENDPOINT environment variable;
+hf-mirror.com is recommended for users in China.
 
-用法:
+Usage:
     python setup/download_models.py
     python setup/download_models.py --model-dir storage/pretrained_models
     HF_ENDPOINT=https://hf-mirror.com python setup/download_models.py
@@ -18,12 +19,12 @@ import json
 from pathlib import Path
 from typing import Optional
 
-# 在 import huggingface_hub 之前设置环境变量，确保 hf_hub 使用镜像
-# 从环境变量读取，默认使用 hf-mirror.com（国内镜像）
+# Set the environment variable before importing huggingface_hub so hf_hub uses the mirror.
+# Read from the environment variable; default to hf-mirror.com (China mirror).
 HF_ENDPOINT = os.environ.get("HF_ENDPOINT", "https://hf-mirror.com")
 os.environ["HF_ENDPOINT"] = HF_ENDPOINT
 
-# ── 颜色输出 ─────────────────────────────────────────────────────────────────
+# ── Color output ──────────────────────────────────────────────────────────────
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 RED = "\033[91m"
@@ -32,7 +33,7 @@ BOLD = "\033[1m"
 RESET = "\033[0m"
 
 if sys.platform == "win32":
-    os.system("")  # 激活 Windows ANSI 颜色
+    os.system("")  # Enable Windows ANSI colors
 
 
 def ok(msg: str) -> str:
@@ -51,11 +52,11 @@ def info(msg: str) -> str:
     return f"{BLUE}ℹ{RESET} {msg}"
 
 
-# ── 模型配置 ─────────────────────────────────────────────────────────────────
-MODEL_REPO_ID = "FunAudioLLM/CosyVoice2-0.5B"  # CosyVoice3 的 HuggingFace 仓库
-MODEL_DIR_NAME = "Fun-CosyVoice3-0.5B-2512"      # 本地存储目录名
+# ── Model configuration ───────────────────────────────────────────────────────
+MODEL_REPO_ID = "FunAudioLLM/CosyVoice2-0.5B"  # HuggingFace repository for CosyVoice3
+MODEL_DIR_NAME = "Fun-CosyVoice3-0.5B-2512"      # Local storage directory name
 
-# 需要下载的关键文件（用于验证完整性）
+# Key files required for integrity verification
 REQUIRED_FILES = [
     "cosyvoice.yaml",
     "campplus.onnx",
@@ -64,33 +65,33 @@ REQUIRED_FILES = [
 
 def check_huggingface_hub() -> bool:
     """
-    检测 huggingface_hub 是否已安装。
+    Check whether huggingface_hub is installed.
 
     Returns:
-        bool: 已安装返回 True
+        bool: True if installed
     """
     try:
         import huggingface_hub
-        print(ok(f"huggingface_hub {huggingface_hub.__version__} 已安装"))
+        print(ok(f"huggingface_hub {huggingface_hub.__version__} is installed"))
         return True
     except ImportError:
-        print(err("huggingface_hub 未安装，请先运行 setup/install.bat"))
+        print(err("huggingface_hub is not installed. Please run setup/install.bat first."))
         return False
 
 
 def download_model(model_dir: str, force: bool = False) -> bool:
     """
-    下载 Fun-CosyVoice3-0.5B-2512 模型到指定目录。
+    Download the Fun-CosyVoice3-0.5B-2512 model to the specified directory.
 
     Args:
-        model_dir: 模型存储根目录（相对或绝对路径）
-        force: 是否强制重新下载（即使已存在）
+        model_dir: Model storage root directory (relative or absolute path)
+        force: Whether to force re-download even if the model already exists
 
     Returns:
-        bool: 下载成功返回 True
+        bool: True if download succeeded
 
     Raises:
-        RuntimeError: 下载失败时抛出
+        RuntimeError: Raised when download fails
     """
     from huggingface_hub import snapshot_download, hf_hub_download
     from huggingface_hub import HfApi
@@ -98,84 +99,84 @@ def download_model(model_dir: str, force: bool = False) -> bool:
     target_dir = Path(model_dir) / MODEL_DIR_NAME
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"\n{BOLD}模型下载配置{RESET}")
-    print(f"  仓库 ID  : {MODEL_REPO_ID}")
-    print(f"  目标目录 : {target_dir.absolute()}")
-    print(f"  HF 源    : {HF_ENDPOINT}")
+    print(f"\n{BOLD}Model download configuration{RESET}")
+    print(f"  Repository ID : {MODEL_REPO_ID}")
+    print(f"  Target dir    : {target_dir.absolute()}")
+    print(f"  HF endpoint   : {HF_ENDPOINT}")
 
-    # 检查是否已下载
+    # Check if already downloaded
     if not force and _is_model_complete(str(target_dir)):
-        print(ok("模型已完整下载，跳过（使用 --force 强制重新下载）"))
+        print(ok("Model already fully downloaded. Skipping (use --force to re-download)."))
         return True
 
-    print(f"\n{BOLD}开始下载模型...{RESET}")
-    print(info("下载约 2GB，请耐心等待。国内用户建议使用 hf-mirror.com 镜像。"))
+    print(f"\n{BOLD}Starting model download...{RESET}")
+    print(info("Download is approximately 2 GB. Please be patient. Users in China should use hf-mirror.com."))
 
     try:
-        # 使用 snapshot_download 下载整个仓库
-        # huggingface_hub 会自动读取 HF_ENDPOINT 环境变量
+        # Use snapshot_download to download the entire repository.
+        # huggingface_hub automatically reads the HF_ENDPOINT environment variable.
         local_dir = snapshot_download(
             repo_id=MODEL_REPO_ID,
             local_dir=str(target_dir),
-            local_dir_use_symlinks=False,  # Windows 不支持符号链接，使用实际文件
-            ignore_patterns=["*.msgpack", "flax_model*", "tf_model*", "rust_model*"],  # 跳过非 PyTorch 格式
+            local_dir_use_symlinks=False,  # Windows does not support symlinks; use real files
+            ignore_patterns=["*.msgpack", "flax_model*", "tf_model*", "rust_model*"],  # Skip non-PyTorch formats
         )
-        print(ok(f"模型下载完成: {local_dir}"))
+        print(ok(f"Model download complete: {local_dir}"))
 
     except Exception as e:
-        print(err(f"下载失败: {e}"))
-        print(info("尝试备用方案：逐文件下载..."))
+        print(err(f"Download failed: {e}"))
+        print(info("Trying fallback: downloading files individually..."))
 
-        # 备用方案：逐文件下载
+        # Fallback: download files one by one
         try:
             _download_files_individually(str(target_dir))
         except Exception as e2:
-            print(err(f"备用下载也失败: {e2}"))
-            print(info("请检查："))
-            print(info("  1. 网络连接是否正常"))
-            print(info("  2. HF_ENDPOINT 是否可访问"))
-            print(info(f"  3. 尝试手动访问: {HF_ENDPOINT}/{MODEL_REPO_ID}"))
+            print(err(f"Fallback download also failed: {e2}"))
+            print(info("Please check:"))
+            print(info("  1. Whether your network connection is working"))
+            print(info("  2. Whether HF_ENDPOINT is accessible"))
+            print(info(f"  3. Try opening manually: {HF_ENDPOINT}/{MODEL_REPO_ID}"))
             return False
 
-    # 验证完整性
-    print(f"\n{BOLD}验证文件完整性...{RESET}")
+    # Verify integrity
+    print(f"\n{BOLD}Verifying file integrity...{RESET}")
     if _is_model_complete(str(target_dir)):
-        print(ok("文件完整性验证通过"))
+        print(ok("File integrity check passed"))
         _print_model_stats(str(target_dir))
         return True
     else:
-        print(warn("部分关键文件缺失，下载可能不完整"))
+        print(warn("Some key files are missing; the download may be incomplete"))
         return False
 
 
 def _download_files_individually(target_dir: str) -> None:
     """
-    逐文件下载（当 snapshot_download 失败时的备用方案）。
+    Download files one by one (fallback when snapshot_download fails).
 
     Args:
-        target_dir: 本地存储目录路径
+        target_dir: Local storage directory path
     """
     from huggingface_hub import hf_hub_download, list_repo_files
 
-    print(info("列出仓库文件列表..."))
+    print(info("Listing repository files..."))
     try:
         files = list(list_repo_files(MODEL_REPO_ID))
     except Exception as e:
-        raise RuntimeError(f"无法获取文件列表: {e}")
+        raise RuntimeError(f"Failed to retrieve file list: {e}")
 
-    # 过滤不需要的文件
+    # Filter out unwanted files
     skip_patterns = [".msgpack", "flax_model", "tf_model", "rust_model"]
     files = [f for f in files if not any(p in f for p in skip_patterns)]
 
-    print(f"  共 {len(files)} 个文件需要下载")
+    print(f"  {len(files)} files to download")
 
     for i, filename in enumerate(files, 1):
         local_path = Path(target_dir) / filename
         if local_path.exists():
-            print(info(f"  [{i}/{len(files)}] 已存在: {filename}"))
+            print(info(f"  [{i}/{len(files)}] Already exists: {filename}"))
             continue
 
-        print(f"  [{i}/{len(files)}] 下载: {filename}")
+        print(f"  [{i}/{len(files)}] Downloading: {filename}")
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
         hf_hub_download(
@@ -188,13 +189,13 @@ def _download_files_individually(target_dir: str) -> None:
 
 def _is_model_complete(target_dir: str) -> bool:
     """
-    检查模型关键文件是否存在。
+    Check whether the model's key files exist.
 
     Args:
-        target_dir: 模型目录路径
+        target_dir: Model directory path
 
     Returns:
-        bool: 关键文件都存在返回 True
+        bool: True if all key files exist
     """
     dir_path = Path(target_dir)
     if not dir_path.exists():
@@ -209,10 +210,10 @@ def _is_model_complete(target_dir: str) -> bool:
 
 def _print_model_stats(model_dir: str) -> None:
     """
-    打印模型目录的文件统计信息。
+    Print file statistics for the model directory.
 
     Args:
-        model_dir: 模型目录路径
+        model_dir: Model directory path
     """
     total_size = 0
     file_count = 0
@@ -224,15 +225,15 @@ def _print_model_stats(model_dir: str) -> None:
             file_count += 1
 
     size_mb = total_size / (1024 ** 2)
-    print(info(f"模型统计: {file_count} 个文件，共 {size_mb:.1f} MB"))
+    print(info(f"Model stats: {file_count} files, {size_mb:.1f} MB total"))
 
 
 def save_download_info(model_dir: str) -> None:
     """
-    保存下载信息到 download_info.json，便于后续版本管理。
+    Save download information to download_info.json for version tracking.
 
     Args:
-        model_dir: 模型根目录
+        model_dir: Model root directory
     """
     import datetime
 
@@ -247,28 +248,28 @@ def save_download_info(model_dir: str) -> None:
     with open(info_path, "w", encoding="utf-8") as f:
         json.dump(download_info, f, ensure_ascii=False, indent=2)
 
-    print(info(f"下载信息已保存: {info_path}"))
+    print(info(f"Download info saved: {info_path}"))
 
 
 def parse_args() -> argparse.Namespace:
     """
-    解析命令行参数。
+    Parse command-line arguments.
 
     Returns:
-        argparse.Namespace: 解析后的参数对象
+        argparse.Namespace: Parsed argument object
     """
     parser = argparse.ArgumentParser(
-        description="下载 Fun-CosyVoice3-0.5B-2512 预训练模型",
+        description="Download the Fun-CosyVoice3-0.5B-2512 pretrained model",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-示例:
+Examples:
   python setup/download_models.py
   python setup/download_models.py --model-dir /data/models
   python setup/download_models.py --force
   HF_ENDPOINT=https://hf-mirror.com python setup/download_models.py
 
-镜像源说明:
-  国内推荐使用 hf-mirror.com：
+Mirror notes:
+  For users in China, hf-mirror.com is recommended:
   export HF_ENDPOINT=https://hf-mirror.com  (Linux/Mac)
   set HF_ENDPOINT=https://hf-mirror.com     (Windows CMD)
         """
@@ -276,45 +277,45 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model-dir",
         default=os.environ.get("MODEL_DIR", "storage/pretrained_models"),
-        help="模型存储目录（默认: storage/pretrained_models 或 MODEL_DIR 环境变量）"
+        help="Model storage directory (default: storage/pretrained_models or MODEL_DIR env var)"
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="强制重新下载，即使模型已存在"
+        help="Force re-download even if the model already exists"
     )
     return parser.parse_args()
 
 
 def main() -> int:
     """
-    主函数，执行模型下载流程。
+    Main function; executes the model download workflow.
 
     Returns:
-        int: 0 表示成功，1 表示失败
+        int: 0 for success, 1 for failure
     """
     print(f"\n{BOLD}{'═' * 52}{RESET}")
-    print(f"{BOLD}  CosyVoice3 模型下载脚本{RESET}")
+    print(f"{BOLD}  CosyVoice3 Model Download Script{RESET}")
     print(f"{BOLD}{'═' * 52}{RESET}")
-    print(f"  镜像源: {HF_ENDPOINT}")
-    print(info("如需更换镜像源，请设置环境变量 HF_ENDPOINT"))
+    print(f"  HF endpoint: {HF_ENDPOINT}")
+    print(info("To change the mirror, set the HF_ENDPOINT environment variable."))
 
     args = parse_args()
 
-    # 检测依赖
+    # Check dependencies
     if not check_huggingface_hub():
         return 1
 
-    # 执行下载
+    # Execute download
     success = download_model(args.model_dir, force=args.force)
 
     if success:
         save_download_info(args.model_dir)
-        print(f"\n{GREEN}{BOLD}✓ 模型下载完成！{RESET}")
-        print(info("下一步: 复制 .env.example 为 .env，然后运行 start.bat 启动服务"))
+        print(f"\n{GREEN}{BOLD}✓ Model download complete!{RESET}")
+        print(info("Next step: copy .env.example to .env, then run start.bat to start the service."))
         return 0
     else:
-        print(f"\n{RED}{BOLD}✗ 模型下载失败，请检查上方错误信息。{RESET}")
+        print(f"\n{RED}{BOLD}✗ Model download failed. Please review the error messages above.{RESET}")
         return 1
 
 

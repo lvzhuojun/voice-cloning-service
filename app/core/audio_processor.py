@@ -1,7 +1,7 @@
 """
-音频预处理模块
-负责将用户上传的各种格式音频转换为模型可用的标准格式，
-并进行质量检测、降噪等预处理操作。
+Audio preprocessing module
+Converts user-uploaded audio in various formats to a standard format usable by the model,
+and performs quality detection, denoising, and other preprocessing operations.
 """
 
 from __future__ import annotations
@@ -20,26 +20,26 @@ from app.models.schemas import QualityReport, BatchProcessReport
 
 logger = logging.getLogger(__name__)
 
-# ── 音频标准参数 ───────────────────────────────────────────────────────────────
-# CosyVoice3 要求的标准采样率
+# ── Standard audio parameters ──────────────────────────────────────────────────
+# Standard sample rate required by CosyVoice3
 STANDARD_SAMPLE_RATE = 22050
-# 提取 embedding 时用于质量检测的采样率（16kHz SNR 估算更准确）
+# Sample rate used for quality detection when extracting embeddings (16 kHz gives more accurate SNR estimates)
 ANALYSIS_SAMPLE_RATE = 16000
-# 高通滤波截止频率（Hz），去除低频噪声（如空调、振动）
+# High-pass filter cutoff frequency (Hz); removes low-frequency noise (e.g. AC hum, vibration)
 HIGHPASS_CUTOFF_HZ = 80
-# 静音检测阈值（RMS能量，低于此值视为静音）
+# Silence detection threshold (RMS energy; values below this are treated as silence)
 SILENCE_THRESHOLD = 0.01
-# 连续静音超过此时长（秒）则标记为"有长静音"
+# Continuous silence exceeding this duration (seconds) is flagged as "long silence"
 LONG_SILENCE_SECONDS = 2.0
-# 信噪比估算：将音频分成若干帧，最低 10% 能量帧视为噪声底
+# SNR estimation: divide audio into frames; the lowest 10% energy frames are treated as noise floor
 NOISE_PERCENTILE = 10
 
 
 class AudioProcessor:
     """
-    音频预处理器，封装音频质量检测、格式转换和降噪功能。
+    Audio preprocessor encapsulating audio quality detection, format conversion, and denoising.
 
-    使用方式:
+    Usage:
         processor = AudioProcessor(min_duration=3, max_duration=60)
         audio, sr = processor.convert_to_standard("input.mp3")
         report = processor.check_quality(audio, sr)
@@ -52,19 +52,19 @@ class AudioProcessor:
         target_sample_rate: int = STANDARD_SAMPLE_RATE,
     ) -> None:
         """
-        初始化音频处理器。
+        Initialize the audio processor.
 
         Args:
-            min_duration: 最短允许时长（秒），默认 3 秒
-            max_duration: 最长允许时长（秒），默认 60 秒
-            target_sample_rate: 目标采样率（Hz），默认 22050
+            min_duration: Minimum allowed duration (seconds), default 3
+            max_duration: Maximum allowed duration (seconds), default 60
+            target_sample_rate: Target sample rate (Hz), default 22050
         """
         self.min_duration = min_duration
         self.max_duration = max_duration
         self.target_sample_rate = target_sample_rate
         logger.info(
-            f"AudioProcessor 初始化完成 | 时长限制: {min_duration}~{max_duration}s | "
-            f"目标采样率: {target_sample_rate}Hz"
+            f"AudioProcessor initialized | Duration limit: {min_duration}~{max_duration}s | "
+            f"Target sample rate: {target_sample_rate}Hz"
         )
 
     def convert_to_standard(
@@ -73,48 +73,48 @@ class AudioProcessor:
         output_path: Optional[str] = None,
     ) -> Tuple[np.ndarray, int]:
         """
-        将任意格式的音频转换为标准格式（单声道、目标采样率 WAV）。
+        Convert audio in any format to a standard format (mono, target sample rate, WAV).
 
-        使用 librosa.load() 自动处理格式转换，支持 WAV/MP3/M4A/FLAC/OGG 等。
+        Uses librosa.load() to handle format conversion automatically; supports WAV/MP3/M4A/FLAC/OGG etc.
 
         Args:
-            input_path: 输入音频文件路径
-            output_path: 输出 WAV 文件路径（可选，不传则只返回数组不保存）
+            input_path: Input audio file path
+            output_path: Output WAV file path (optional; if not provided, returns array only without saving)
 
         Returns:
-            Tuple[np.ndarray, int]: (音频数组 float32, 采样率)
+            Tuple[np.ndarray, int]: (audio array float32, sample rate)
 
         Raises:
-            FileNotFoundError: 输入文件不存在
-            ValueError: 音频加载失败
-            IOError: 文件读取或写入失败
+            FileNotFoundError: Input file does not exist
+            ValueError: Audio loading failed
+            IOError: File read or write failed
         """
         if not os.path.exists(input_path):
-            raise FileNotFoundError(f"音频文件不存在: {input_path}")
+            raise FileNotFoundError(f"Audio file does not exist: {input_path}")
 
         try:
-            # librosa.load 自动处理：
-            # 1. 格式解码（MP3/M4A 需要系统 ffmpeg）
-            # 2. 重采样到目标采样率
-            # 3. 立体声转单声道（取平均）
-            # 4. 归一化到 [-1.0, 1.0] float32
+            # librosa.load automatically handles:
+            # 1. Format decoding (MP3/M4A requires system ffmpeg)
+            # 2. Resampling to the target sample rate
+            # 3. Stereo to mono conversion (average channels)
+            # 4. Normalization to [-1.0, 1.0] float32
             audio, sr = librosa.load(
                 input_path,
                 sr=self.target_sample_rate,
                 mono=True,
             )
-            logger.debug(f"音频加载成功: {input_path} | 时长: {len(audio)/sr:.2f}s | sr: {sr}Hz")
+            logger.debug(f"Audio loaded successfully: {input_path} | Duration: {len(audio)/sr:.2f}s | sr: {sr}Hz")
         except Exception as e:
-            raise ValueError(f"音频文件加载失败 ({input_path}): {e}") from e
+            raise ValueError(f"Failed to load audio file ({input_path}): {e}") from e
 
-        # 如果指定了输出路径，保存为 WAV
+        # If an output path is specified, save as WAV
         if output_path:
             try:
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
                 sf.write(output_path, audio, sr, subtype="PCM_16")
-                logger.debug(f"标准化音频已保存: {output_path}")
+                logger.debug(f"Standardized audio saved: {output_path}")
             except Exception as e:
-                raise IOError(f"音频文件保存失败 ({output_path}): {e}") from e
+                raise IOError(f"Failed to save audio file ({output_path}): {e}") from e
 
         return audio, sr
 
@@ -124,44 +124,44 @@ class AudioProcessor:
         sample_rate: int,
     ) -> QualityReport:
         """
-        检测音频质量，返回详细质量报告。
+        Inspect audio quality and return a detailed quality report.
 
-        检测项目：
-        - 时长是否在允许范围内
-        - 信噪比估算（基于能量分布）
-        - 长静音段检测
-        - 综合质量评分
+        Checks:
+        - Whether duration is within the allowed range
+        - SNR estimate (based on energy distribution)
+        - Long silence segment detection
+        - Overall quality score
 
         Args:
-            audio: 音频数组（float32，单声道，[-1, 1]）
-            sample_rate: 采样率（Hz）
+            audio: Audio array (float32, mono, [-1, 1])
+            sample_rate: Sample rate (Hz)
 
         Returns:
-            QualityReport: 质量报告对象
+            QualityReport: Quality report object
         """
         warnings = []
         duration = len(audio) / sample_rate
 
-        # ── 时长检测 ────────────────────────────────────────────────────────
+        # ── Duration check ───────────────────────────────────────────────────
         duration_ok = self.min_duration <= duration <= self.max_duration
         if duration < self.min_duration:
-            warnings.append(f"音频时长 {duration:.1f}s 过短，建议不低于 {self.min_duration}s")
+            warnings.append(f"Audio duration {duration:.1f}s is too short; recommended minimum is {self.min_duration}s")
         elif duration > self.max_duration:
-            warnings.append(f"音频时长 {duration:.1f}s 过长，建议不超过 {self.max_duration}s")
+            warnings.append(f"Audio duration {duration:.1f}s is too long; recommended maximum is {self.max_duration}s")
 
-        # ── 信噪比估算 ──────────────────────────────────────────────────────
+        # ── SNR estimation ───────────────────────────────────────────────────
         snr_db = self._estimate_snr(audio, sample_rate)
         if snr_db < 10.0:
-            warnings.append(f"信噪比偏低 ({snr_db:.1f}dB)，建议在安静环境中录音")
+            warnings.append(f"SNR is low ({snr_db:.1f}dB); recording in a quiet environment is recommended")
         elif snr_db < 20.0:
-            warnings.append(f"信噪比一般 ({snr_db:.1f}dB)，可能影响音色克隆效果")
+            warnings.append(f"SNR is moderate ({snr_db:.1f}dB); may affect voice cloning quality")
 
-        # ── 长静音检测 ──────────────────────────────────────────────────────
+        # ── Long silence detection ───────────────────────────────────────────
         has_long_silence = self._detect_long_silence(audio, sample_rate)
         if has_long_silence:
-            warnings.append(f"检测到超过 {LONG_SILENCE_SECONDS}s 的连续静音段，建议裁剪")
+            warnings.append(f"Continuous silence longer than {LONG_SILENCE_SECONDS}s detected; trimming is recommended")
 
-        # ── 综合质量评分 ────────────────────────────────────────────────────
+        # ── Overall quality score ────────────────────────────────────────────
         quality_score = self._compute_quality_score(
             duration_ok=duration_ok,
             snr_db=snr_db,
@@ -175,7 +175,7 @@ class AudioProcessor:
             quality_score=round(quality_score, 4),
             has_long_silence=has_long_silence,
             sample_rate=sample_rate,
-            channels=1,  # 已经转为单声道
+            channels=1,  # Already converted to mono
             warnings=warnings,
         )
 
@@ -185,33 +185,34 @@ class AudioProcessor:
         sample_rate: int,
     ) -> np.ndarray:
         """
-        简单降噪：高通滤波去除低频噪声（如空调、麦克风低频噪声）。
+        Simple denoising: high-pass filter to remove low-frequency noise
+        (e.g. AC hum, microphone low-frequency noise).
 
-        使用 librosa 的 butter 高通滤波（截止频率 80Hz），
-        低频成分（< 80Hz）在自然语音中通常是噪声而非语音内容。
+        Uses librosa's Butterworth high-pass filter (cutoff 80 Hz).
+        Low-frequency components (< 80 Hz) in natural speech are typically noise rather than speech content.
 
         Args:
-            audio: 输入音频数组（float32）
-            sample_rate: 采样率（Hz）
+            audio: Input audio array (float32)
+            sample_rate: Sample rate (Hz)
 
         Returns:
-            np.ndarray: 降噪后的音频数组（同形状，float32）
+            np.ndarray: Denoised audio array (same shape, float32)
         """
         from scipy import signal as scipy_signal
 
-        # 设计 Butterworth 高通滤波器（4阶）
+        # Design a Butterworth high-pass filter (4th order)
         nyquist = sample_rate / 2.0
         cutoff_normalized = HIGHPASS_CUTOFF_HZ / nyquist
 
-        # 截止频率必须在 (0, 1) 范围内
+        # Cutoff frequency must be in the range (0, 1)
         if cutoff_normalized >= 1.0:
-            logger.warning(f"采样率 {sample_rate}Hz 过低，跳过高通滤波")
+            logger.warning(f"Sample rate {sample_rate}Hz is too low; skipping high-pass filter")
             return audio
 
         b, a = scipy_signal.butter(4, cutoff_normalized, btype="high")
         denoised = scipy_signal.filtfilt(b, a, audio).astype(np.float32)
 
-        logger.debug(f"高通滤波完成 | 截止频率: {HIGHPASS_CUTOFF_HZ}Hz")
+        logger.debug(f"High-pass filter applied | Cutoff: {HIGHPASS_CUTOFF_HZ}Hz")
         return denoised
 
     def select_best_segment(
@@ -222,25 +223,27 @@ class AudioProcessor:
         step_seconds: float = 1.0,
     ) -> Tuple[np.ndarray, float, float]:
         """
-        从长音频中自动截取信噪比最高的片段（滑动窗口法）。
+        Automatically extract the segment with the highest SNR from a long audio clip
+        using a sliding window approach.
 
-        适用于用户上传了较长的录音，需要自动提取最优片段作为参考音频。
+        Useful when the user uploads a long recording and the best segment needs to be
+        automatically selected as the reference audio.
 
         Args:
-            audio: 音频数组（float32）
-            sample_rate: 采样率（Hz）
-            target_duration: 目标片段时长（秒），默认 10 秒
-            step_seconds: 滑动步长（秒），默认 1 秒
+            audio: Audio array (float32)
+            sample_rate: Sample rate (Hz)
+            target_duration: Target segment duration (seconds), default 10
+            step_seconds: Sliding step size (seconds), default 1
 
         Returns:
             Tuple[np.ndarray, float, float]:
-                - 最优音频片段数组
-                - 片段开始时间（秒）
-                - 片段的信噪比（dB）
+                - Best audio segment array
+                - Segment start time (seconds)
+                - Segment SNR (dB)
         """
         duration = len(audio) / sample_rate
 
-        # 如果音频时长不超过目标，直接返回全段
+        # If audio is shorter than or equal to target duration, return the whole clip
         if duration <= target_duration:
             snr = self._estimate_snr(audio, sample_rate)
             return audio, 0.0, snr
@@ -251,7 +254,7 @@ class AudioProcessor:
         best_snr = -float("inf")
         best_start = 0
 
-        # 滑动窗口遍历，找信噪比最高的片段
+        # Slide the window to find the segment with the highest SNR
         for start in range(0, len(audio) - window_samples + 1, step_samples):
             segment = audio[start : start + window_samples]
             snr = self._estimate_snr(segment, sample_rate)
@@ -263,8 +266,8 @@ class AudioProcessor:
         best_start_seconds = best_start / sample_rate
 
         logger.info(
-            f"最优片段选取完成 | 起始: {best_start_seconds:.1f}s | "
-            f"时长: {target_duration}s | SNR: {best_snr:.1f}dB"
+            f"Best segment selected | Start: {best_start_seconds:.1f}s | "
+            f"Duration: {target_duration}s | SNR: {best_snr:.1f}dB"
         )
         return best_segment, best_start_seconds, best_snr
 
@@ -274,19 +277,19 @@ class AudioProcessor:
         output_dir: Optional[str] = None,
     ) -> Tuple[Dict[str, Tuple[np.ndarray, int]], BatchProcessReport]:
         """
-        批量处理多个音频文件：转换格式 + 质量检测 + 降噪。
+        Batch-process multiple audio files: format conversion + quality detection + denoising.
 
         Args:
-            input_paths: 输入音频文件路径列表
-            output_dir: 处理后文件的保存目录（可选）
+            input_paths: List of input audio file paths
+            output_dir: Directory to save processed files (optional)
 
         Returns:
             Tuple[Dict, BatchProcessReport]:
-                - 字典：{原文件名: (音频数组, 采样率)}（仅成功处理的文件）
-                - 批量处理汇总报告
+                - Dictionary: {original filename: (audio array, sample rate)} (successfully processed only)
+                - Batch processing summary report
 
         Note:
-            处理失败的文件会记录在 report.errors 中，不会中断整个批处理。
+            Files that fail processing are recorded in report.errors and do not interrupt the batch.
         """
         processed: Dict[str, Tuple[np.ndarray, int]] = {}
         file_reports: Dict = {}
@@ -294,10 +297,10 @@ class AudioProcessor:
 
         for input_path in input_paths:
             filename = os.path.basename(input_path)
-            logger.info(f"处理音频: {filename}")
+            logger.info(f"Processing audio: {filename}")
 
             try:
-                # 1. 格式转换
+                # 1. Format conversion
                 if output_dir:
                     stem = Path(input_path).stem
                     out_path = os.path.join(output_dir, f"{stem}_processed.wav")
@@ -306,24 +309,24 @@ class AudioProcessor:
 
                 audio, sr = self.convert_to_standard(input_path, out_path)
 
-                # 2. 简单降噪
+                # 2. Simple denoising
                 audio = self.denoise_simple(audio, sr)
 
-                # 3. 质量检测
+                # 3. Quality detection
                 report = self.check_quality(audio, sr)
                 file_reports[filename] = report
                 processed[filename] = (audio, sr)
 
                 logger.info(
-                    f"  ✓ {filename} | 时长: {report.duration_seconds:.1f}s | "
-                    f"SNR: {report.snr_db:.1f}dB | 质量分: {report.quality_score:.2f}"
+                    f"  ✓ {filename} | Duration: {report.duration_seconds:.1f}s | "
+                    f"SNR: {report.snr_db:.1f}dB | Quality: {report.quality_score:.2f}"
                 )
 
             except Exception as e:
                 errors[filename] = str(e)
-                logger.warning(f"  ✗ {filename} 处理失败: {e}")
+                logger.warning(f"  ✗ {filename} processing failed: {e}")
 
-        # ── 计算汇总统计 ────────────────────────────────────────────────────
+        # ── Calculate summary statistics ─────────────────────────────────────
         success_count = len(processed)
         failed_count = len(errors)
         total_duration = sum(r.duration_seconds for r in file_reports.values())
@@ -344,35 +347,35 @@ class AudioProcessor:
         )
 
         logger.info(
-            f"批量处理完成 | 共 {len(input_paths)} 个文件 | "
-            f"成功: {success_count} | 失败: {failed_count}"
+            f"Batch processing complete | {len(input_paths)} files total | "
+            f"Succeeded: {success_count} | Failed: {failed_count}"
         )
         return processed, report
 
     # ══════════════════════════════════════════════════════════════════════════
-    # 私有辅助方法
+    # Private helper methods
     # ══════════════════════════════════════════════════════════════════════════
 
     def _estimate_snr(self, audio: np.ndarray, sample_rate: int) -> float:
         """
-        估算信噪比（Signal-to-Noise Ratio，单位 dB）。
+        Estimate the signal-to-noise ratio (SNR) in dB.
 
-        方法：将音频分为短帧，计算每帧 RMS 能量。
-        将最低 10% 能量的帧视为噪声底，其余帧视为信号。
+        Method: divide the audio into short frames and compute the RMS energy of each frame.
+        The lowest 10% energy frames are treated as the noise floor; the rest are treated as signal.
         SNR = 10 * log10(signal_power / noise_power)
 
         Args:
-            audio: 音频数组（float32）
-            sample_rate: 采样率（Hz）
+            audio: Audio array (float32)
+            sample_rate: Sample rate (Hz)
 
         Returns:
-            float: 估算的 SNR（dB），典型范围 0~40dB
+            float: Estimated SNR (dB), typical range 0~40 dB
         """
-        # 帧长：25ms，步长：10ms
+        # Frame length: 25 ms, hop length: 10 ms
         frame_length = int(0.025 * sample_rate)
         hop_length = int(0.010 * sample_rate)
 
-        # 计算短时 RMS 能量
+        # Compute short-time RMS energy
         rms = librosa.feature.rms(
             y=audio,
             frame_length=frame_length,
@@ -382,18 +385,18 @@ class AudioProcessor:
         if len(rms) == 0 or np.all(rms == 0):
             return 0.0
 
-        # 过滤掉能量极低的帧（纯静音帧不参与计算）
+        # Filter out near-zero energy frames (pure silence frames are excluded)
         rms_nonzero = rms[rms > 1e-8]
         if len(rms_nonzero) == 0:
             return 0.0
 
-        # 噪声能量 = 最低 NOISE_PERCENTILE% 帧的能量均值
+        # Noise energy = mean energy of the lowest NOISE_PERCENTILE% frames
         noise_rms = np.percentile(rms_nonzero, NOISE_PERCENTILE)
-        # 信号能量 = 最高 50% 帧的能量均值（信号主体）
+        # Signal energy = mean energy of the top 50% frames (main signal)
         signal_rms = np.percentile(rms_nonzero, 75)
 
         if noise_rms < 1e-10:
-            return 40.0  # 噪声极低，返回上限
+            return 40.0  # Noise is very low; return upper bound
 
         snr_db = 20.0 * np.log10(signal_rms / noise_rms + 1e-10)
         return float(np.clip(snr_db, -10.0, 60.0))
@@ -404,16 +407,16 @@ class AudioProcessor:
         sample_rate: int,
     ) -> bool:
         """
-        检测音频中是否存在超过阈值时长的连续静音段。
+        Detect whether the audio contains a continuous silence segment longer than the threshold.
 
         Args:
-            audio: 音频数组（float32）
-            sample_rate: 采样率（Hz）
+            audio: Audio array (float32)
+            sample_rate: Sample rate (Hz)
 
         Returns:
-            bool: 存在长静音段返回 True
+            bool: True if a long silence segment exists
         """
-        # 帧级 RMS 能量
+        # Frame-level RMS energy
         frame_length = int(0.025 * sample_rate)
         hop_length = int(0.010 * sample_rate)
         rms = librosa.feature.rms(
@@ -422,12 +425,12 @@ class AudioProcessor:
             hop_length=hop_length,
         )[0]
 
-        # 静音帧判断
+        # Silence frame detection
         silence_mask = rms < SILENCE_THRESHOLD
-        # 连续静音帧数阈值
+        # Maximum allowed consecutive silence frames
         max_silence_frames = int(LONG_SILENCE_SECONDS / (hop_length / sample_rate))
 
-        # 计算最长连续静音段长度
+        # Find the longest consecutive silence run
         max_consecutive = 0
         current_consecutive = 0
         for is_silence in silence_mask:
@@ -446,32 +449,32 @@ class AudioProcessor:
         has_long_silence: bool,
     ) -> float:
         """
-        综合计算质量评分（0.0~1.0）。
+        Compute an overall quality score (0.0~1.0).
 
-        评分规则：
-        - 时长不达标：-0.3 扣分
-        - 有长静音：-0.1 扣分
-        - SNR 贡献：0~0.7（按 SNR 线性映射到 0~40dB 范围）
+        Scoring rules:
+        - Duration out of range: -0.3 penalty
+        - Has long silence: -0.1 penalty
+        - SNR contribution: 0~0.7 (SNR linearly mapped from 0~40 dB range)
 
         Args:
-            duration_ok: 时长是否合规
-            snr_db: 信噪比（dB）
-            has_long_silence: 是否有长静音
+            duration_ok: Whether the duration is within the allowed range
+            snr_db: Signal-to-noise ratio (dB)
+            has_long_silence: Whether long silence exists
 
         Returns:
-            float: 质量评分（0.0~1.0）
+            float: Quality score (0.0~1.0)
         """
         score = 0.0
 
-        # SNR 分数：SNR 40dB 对应满分 0.7
+        # SNR score: SNR of 40 dB corresponds to full score 0.7
         snr_clamped = float(np.clip(snr_db, 0.0, 40.0))
         score += (snr_clamped / 40.0) * 0.7
 
-        # 时长合规加分
+        # Duration compliance bonus
         if duration_ok:
             score += 0.2
 
-        # 无长静音加分
+        # No long silence bonus
         if not has_long_silence:
             score += 0.1
 

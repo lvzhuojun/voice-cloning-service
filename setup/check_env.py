@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-环境检测脚本
-检测 Python 版本、CUDA、GPU、PyTorch 以及所有核心依赖，输出友好的报告。
-在安装完成后、启动服务前运行此脚本，可提前发现兼容性问题。
+Environment check script
+Detects the Python version, CUDA, GPU, PyTorch, and all core dependencies,
+then outputs a friendly report.
+Run this script after installation and before starting the service to catch
+compatibility issues early.
 """
 
 import sys
@@ -12,7 +14,7 @@ import importlib
 import subprocess
 from typing import Tuple, Optional
 
-# ── 颜色输出（Windows 10+ 支持 ANSI 颜色）────────────────────────────────────
+# ── Color output (Windows 10+ supports ANSI colors) ──────────────────────────
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 RED = "\033[91m"
@@ -20,9 +22,9 @@ BLUE = "\033[94m"
 BOLD = "\033[1m"
 RESET = "\033[0m"
 
-# 在 Windows 上启用 ANSI 颜色支持
+# Enable ANSI color support on Windows
 if platform.system() == "Windows":
-    os.system("")  # 激活 ANSI 转义
+    os.system("")  # Activate ANSI escape codes
 
 
 def ok(msg: str) -> str:
@@ -49,90 +51,90 @@ def section(title: str) -> None:
 
 def check_python() -> bool:
     """
-    检测 Python 版本，要求 3.10.x。
+    Check the Python version; requires 3.10.x.
 
     Returns:
-        bool: 版本符合要求返回 True，否则 False
+        bool: True if the version meets the requirement, False otherwise
     """
-    section("Python 版本")
+    section("Python Version")
     version = sys.version_info
     version_str = f"{version.major}.{version.minor}.{version.micro}"
-    print(f"  当前版本: {version_str}")
-    print(f"  Python 路径: {sys.executable}")
+    print(f"  Current version: {version_str}")
+    print(f"  Python path: {sys.executable}")
 
     if version.major == 3 and version.minor == 10:
-        print(ok(f"Python {version_str} 符合要求（需要 3.10.x）"))
+        print(ok(f"Python {version_str} meets the requirement (needs 3.10.x)"))
         return True
     elif version.major == 3 and version.minor > 10:
-        print(warn(f"Python {version_str} 高于要求版本（3.10），可能存在兼容性问题"))
+        print(warn(f"Python {version_str} is newer than required (3.10); compatibility issues may occur"))
         return True
     else:
-        print(err(f"Python {version_str} 不符合要求，需要 3.10.x"))
+        print(err(f"Python {version_str} does not meet the requirement; needs 3.10.x"))
         return False
 
 
 def check_pytorch() -> Tuple[bool, Optional[str]]:
     """
-    检测 PyTorch 安装情况，要求 >= 2.7。
+    Check the PyTorch installation; requires >= 2.7.
 
     Returns:
-        Tuple[bool, Optional[str]]: (是否通过, PyTorch版本字符串)
+        Tuple[bool, Optional[str]]: (whether check passed, PyTorch version string)
     """
-    section("PyTorch 版本")
+    section("PyTorch Version")
     try:
         import torch
         version = torch.__version__
-        print(f"  PyTorch 版本: {version}")
-        print(f"  安装路径: {torch.__file__}")
+        print(f"  PyTorch version: {version}")
+        print(f"  Install path: {torch.__file__}")
 
-        # 解析版本号（支持 nightly 格式如 2.7.0.dev20240301+cu121）
+        # Parse version number (supports nightly format like 2.7.0.dev20240301+cu121)
         version_clean = version.split("+")[0].replace(".dev", ".")
         parts = version_clean.split(".")
         major, minor = int(parts[0]), int(parts[1])
 
         if major > 2 or (major == 2 and minor >= 7):
-            print(ok(f"PyTorch {version} 符合要求（需要 >= 2.7，支持 RTX 5060 Blackwell sm_120）"))
+            print(ok(f"PyTorch {version} meets the requirement (needs >= 2.7, supports RTX 5060 Blackwell sm_120)"))
             return True, version
         else:
-            print(err(f"PyTorch {version} 版本过低，RTX 5060 (Blackwell/sm_120) 需要 PyTorch >= 2.7"))
-            print(info("  请运行: pip install torch>=2.7 --index-url https://download.pytorch.org/whl/nightly/cu121"))
+            print(err(f"PyTorch {version} is too old; RTX 5060 (Blackwell/sm_120) requires PyTorch >= 2.7"))
+            print(info("  Please run: pip install torch>=2.7 --index-url https://download.pytorch.org/whl/nightly/cu121"))
             return False, version
     except ImportError:
-        print(err("PyTorch 未安装"))
+        print(err("PyTorch is not installed"))
         return False, None
 
 
 def check_cuda() -> Tuple[bool, Optional[str]]:
     """
-    检测 CUDA 可用性和 GPU 信息。
+    Check CUDA availability and GPU information.
 
     Returns:
-        Tuple[bool, Optional[str]]: (CUDA是否可用, GPU名称)
+        Tuple[bool, Optional[str]]: (whether CUDA is available, GPU name)
     """
-    section("CUDA & GPU 检测")
+    section("CUDA & GPU Detection")
 
     try:
         import torch
 
-        # 检测 CUDA 是否可用
+        # Check whether CUDA is available
         cuda_available = torch.cuda.is_available()
-        print(f"  CUDA 可用: {'是' if cuda_available else '否'}")
+        print(f"  CUDA available: {'Yes' if cuda_available else 'No'}")
 
         if not cuda_available:
-            print(err("CUDA 不可用，服务将以 CPU 模式运行（性能极低）"))
-            print(info("  可能原因："))
-            print(info("    1. PyTorch 版本不支持当前 GPU（RTX 5060 需要 >= 2.7）"))
-            print(info("    2. NVIDIA 驱动未正确安装"))
-            print(info("    3. 当前环境中 CUDA 库路径未配置"))
+            print(err("CUDA is not available; the service will run in CPU mode (very slow)"))
+            print(info("  Possible reasons:"))
+            print(info("    1. The PyTorch version does not support the current GPU (RTX 5060 requires >= 2.7)"))
+            print(info("    2. NVIDIA drivers are not correctly installed"))
+            print(info("    3. CUDA library paths are not configured in the current environment"))
             return False, None
 
-        # 获取 PyTorch 编译时 CUDA 版本
+        # Get the CUDA version PyTorch was compiled with
         cuda_version = torch.version.cuda
-        print(f"  PyTorch CUDA 版本: {cuda_version}")
+        print(f"  PyTorch CUDA version: {cuda_version}")
 
-        # 获取 GPU 信息
+        # Get GPU information
         device_count = torch.cuda.device_count()
-        print(f"  GPU 数量: {device_count}")
+        print(f"  GPU count: {device_count}")
 
         gpu_name = None
         for i in range(device_count):
@@ -145,36 +147,36 @@ def check_cuda() -> Tuple[bool, Optional[str]]:
 
             print(f"\n  GPU {i}: {props.name}")
             print(f"    Compute Capability: sm_{cc_major}{cc_minor} ({cc})")
-            print(f"    显存: {total_mem_gb:.1f} GB")
-            print(f"    多处理器数量: {props.multi_processor_count}")
+            print(f"    VRAM: {total_mem_gb:.1f} GB")
+            print(f"    Multiprocessor count: {props.multi_processor_count}")
 
-            # 针对 RTX 5060 Blackwell 的特殊提示
+            # Special note for RTX 5060 Blackwell
             if cc_major >= 12:
-                print(ok(f"    Blackwell 架构 (sm_{cc_major}{cc_minor}) 检测成功 - 需要 PyTorch >= 2.7"))
+                print(ok(f"    Blackwell architecture (sm_{cc_major}{cc_minor}) detected - requires PyTorch >= 2.7"))
             elif cc_major == 8 or cc_major == 9:
-                print(ok(f"    Ampere/Ada 架构 (sm_{cc_major}{cc_minor}) 正常支持"))
+                print(ok(f"    Ampere/Ada architecture (sm_{cc_major}{cc_minor}) fully supported"))
             else:
-                print(info(f"    架构: sm_{cc_major}{cc_minor}"))
+                print(info(f"    Architecture: sm_{cc_major}{cc_minor}"))
 
-        print(ok("CUDA 可用，GPU 已正确识别"))
+        print(ok("CUDA is available and GPU is recognized correctly"))
         return True, gpu_name
 
     except Exception as e:
-        print(err(f"CUDA 检测失败: {e}"))
+        print(err(f"CUDA detection failed: {e}"))
         return False, None
 
 
 def check_package(package_name: str, import_name: Optional[str] = None, min_version: Optional[str] = None) -> bool:
     """
-    检测单个 Python 包是否已安装。
+    Check whether a single Python package is installed.
 
     Args:
-        package_name: PyPI 包名（用于显示）
-        import_name: import 时的模块名（可能与包名不同）
-        min_version: 最低版本要求（字符串，可选）
+        package_name: PyPI package name (for display)
+        import_name: Module name used in import (may differ from package name)
+        min_version: Minimum version requirement (string, optional)
 
     Returns:
-        bool: 包存在且版本符合要求返回 True
+        bool: True if the package exists and meets the version requirement
     """
     import_name = import_name or package_name
     try:
@@ -183,18 +185,18 @@ def check_package(package_name: str, import_name: Optional[str] = None, min_vers
         print(ok(f"{package_name} {version}"))
         return True
     except ImportError:
-        print(err(f"{package_name} 未安装"))
+        print(err(f"{package_name} is not installed"))
         return False
 
 
 def check_core_packages() -> bool:
     """
-    检测所有核心依赖包。
+    Check all core dependency packages.
 
     Returns:
-        bool: 所有必须包都存在返回 True
+        bool: True if all required packages are present
     """
-    section("核心依赖包检测")
+    section("Core Dependency Check")
 
     required_packages = [
         ("fastapi", "fastapi"),
@@ -218,14 +220,14 @@ def check_core_packages() -> bool:
         ("ffmpeg-python", "ffmpeg"),
     ]
 
-    print("\n  【必须包】")
+    print("\n  [Required packages]")
     all_ok = True
     for pkg_name, import_name in required_packages:
         result = check_package(pkg_name, import_name)
         if not result:
             all_ok = False
 
-    print("\n  【可选包（CosyVoice3 相关）】")
+    print("\n  [Optional packages (CosyVoice3-related)]")
     for pkg_name, import_name in optional_packages:
         check_package(pkg_name, import_name)
 
@@ -234,12 +236,13 @@ def check_core_packages() -> bool:
 
 def check_ffmpeg_binary() -> bool:
     """
-    检测 ffmpeg 命令行工具是否可用（与 ffmpeg-python 包分开检测）。
+    Check whether the ffmpeg command-line tool is available
+    (checked separately from the ffmpeg-python package).
 
     Returns:
-        bool: ffmpeg 可用返回 True
+        bool: True if ffmpeg is available
     """
-    section("FFmpeg 命令行工具")
+    section("FFmpeg Command-Line Tool")
     try:
         result = subprocess.run(
             ["ffmpeg", "-version"],
@@ -248,45 +251,45 @@ def check_ffmpeg_binary() -> bool:
             timeout=10
         )
         if result.returncode == 0:
-            # 提取版本号（第一行）
+            # Extract version number (first line)
             first_line = result.stdout.split("\n")[0]
-            print(ok(f"FFmpeg 可用: {first_line}"))
+            print(ok(f"FFmpeg is available: {first_line}"))
             return True
         else:
-            print(err("FFmpeg 命令执行失败"))
+            print(err("FFmpeg command execution failed"))
             return False
     except FileNotFoundError:
-        print(err("ffmpeg 命令未找到，请确保 ffmpeg 已通过 conda 安装或在 PATH 中"))
+        print(err("ffmpeg command not found. Make sure ffmpeg is installed via conda or is in PATH."))
         return False
     except Exception as e:
-        print(err(f"FFmpeg 检测异常: {e}"))
+        print(err(f"FFmpeg detection error: {e}"))
         return False
 
 
 def check_model_files() -> None:
     """
-    检测预训练模型是否已下载。
+    Check whether the pretrained model has been downloaded.
     """
-    section("预训练模型")
+    section("Pretrained Model")
 
-    # 从环境变量或默认路径读取模型目录
+    # Read model directory from environment variable or use default path
     model_dir = os.environ.get("MODEL_DIR", "storage/pretrained_models")
     cosyvoice_dir = os.path.join(model_dir, "Fun-CosyVoice3-0.5B-2512")
 
-    print(f"  模型目录: {os.path.abspath(model_dir)}")
+    print(f"  Model directory: {os.path.abspath(model_dir)}")
 
     if not os.path.exists(model_dir):
-        print(warn(f"模型目录不存在: {model_dir}"))
-        print(info("  请先运行: python setup/download_models.py"))
+        print(warn(f"Model directory does not exist: {model_dir}"))
+        print(info("  Please run: python setup/download_models.py"))
         return
 
     if os.path.exists(cosyvoice_dir):
-        # 检查关键文件
+        # Check key files
         key_files = ["config.yaml", "cosyvoice.yaml"]
         found = [f for f in key_files if os.path.exists(os.path.join(cosyvoice_dir, f))]
         if found:
-            print(ok(f"Fun-CosyVoice3-0.5B-2512 模型已下载"))
-            # 统计文件数量和总大小
+            print(ok(f"Fun-CosyVoice3-0.5B-2512 model has been downloaded"))
+            # Count files and total size
             total_size = 0
             file_count = 0
             for root, dirs, files in os.walk(cosyvoice_dir):
@@ -294,44 +297,44 @@ def check_model_files() -> None:
                     fp = os.path.join(root, file)
                     total_size += os.path.getsize(fp)
                     file_count += 1
-            print(info(f"  文件数: {file_count}，总大小: {total_size / (1024**2):.1f} MB"))
+            print(info(f"  File count: {file_count}, total size: {total_size / (1024**2):.1f} MB"))
         else:
-            print(warn("模型目录存在但关键文件缺失，建议重新下载"))
-            print(info("  请运行: python setup/download_models.py"))
+            print(warn("Model directory exists but key files are missing; consider re-downloading"))
+            print(info("  Please run: python setup/download_models.py"))
     else:
-        print(warn("Fun-CosyVoice3-0.5B-2512 模型尚未下载"))
-        print(info("  请运行: python setup/download_models.py"))
+        print(warn("Fun-CosyVoice3-0.5B-2512 model has not been downloaded yet"))
+        print(info("  Please run: python setup/download_models.py"))
 
 
 def main() -> int:
     """
-    主函数，运行所有检测项目，返回退出码。
+    Main function; runs all checks and returns an exit code.
 
     Returns:
-        int: 0 表示全部通过，1 表示有错误
+        int: 0 if all checks pass, 1 if any check fails
     """
     print(f"\n{BOLD}{'═' * 52}{RESET}")
-    print(f"{BOLD}  语音克隆服务 - 环境检测报告{RESET}")
+    print(f"{BOLD}  Voice Cloning Service - Environment Check Report{RESET}")
     print(f"{BOLD}{'═' * 52}{RESET}")
-    print(f"  平台: {platform.system()} {platform.release()}")
-    print(f"  架构: {platform.machine()}")
+    print(f"  Platform: {platform.system()} {platform.release()}")
+    print(f"  Architecture: {platform.machine()}")
 
     results = []
 
-    # 按顺序执行所有检测
-    results.append(("Python 版本", check_python()))
+    # Run all checks in order
+    results.append(("Python Version", check_python()))
     pytorch_ok, _ = check_pytorch()
     results.append(("PyTorch", pytorch_ok))
     cuda_ok, _ = check_cuda()
     results.append(("CUDA/GPU", cuda_ok))
-    results.append(("核心依赖", check_core_packages()))
+    results.append(("Core Dependencies", check_core_packages()))
     results.append(("FFmpeg", check_ffmpeg_binary()))
 
-    # 模型文件检测（不计入通过/失败）
+    # Model file check (not counted in pass/fail)
     check_model_files()
 
-    # 汇总报告
-    section("检测汇总")
+    # Summary report
+    section("Check Summary")
     all_passed = True
     for name, passed in results:
         if passed:
@@ -342,12 +345,12 @@ def main() -> int:
 
     print()
     if all_passed:
-        print(f"{GREEN}{BOLD}✓ 所有检测项目通过！环境已就绪。{RESET}")
-        print(info("  下一步: python setup/download_models.py（如尚未下载模型）"))
-        print(info("  启动服务: start.bat"))
+        print(f"{GREEN}{BOLD}✓ All checks passed! Environment is ready.{RESET}")
+        print(info("  Next step: python setup/download_models.py (if model not yet downloaded)"))
+        print(info("  Start service: start.bat"))
         return 0
     else:
-        print(f"{RED}{BOLD}✗ 部分检测失败，请根据上方提示修复后重试。{RESET}")
+        print(f"{RED}{BOLD}✗ Some checks failed. Please fix the issues indicated above and try again.{RESET}")
         return 1
 
 

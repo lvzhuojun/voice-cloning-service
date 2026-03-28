@@ -1,6 +1,6 @@
 """
-FastAPI 应用入口
-注册所有路由、配置 CORS、异常处理和启动事件。
+FastAPI application entry point
+Registers all routes, configures CORS, exception handling, and startup events.
 """
 
 import logging
@@ -19,7 +19,7 @@ from app.api import voices as voices_router
 from app.config import settings
 from app.utils.logger import setup_logging
 
-# ── 配置日志（在所有 import 之后，FastAPI 初始化之前）────────────────────────
+# ── Configure logging (after all imports, before FastAPI initialization) ──────
 setup_logging(level=settings.log_level)
 logger = logging.getLogger(__name__)
 
@@ -27,32 +27,32 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    FastAPI 应用生命周期管理。
-    startup: 确保目录存在、尝试预加载模型
-    shutdown: 清理资源（当前无特殊清理需求）
+    FastAPI application lifecycle management.
+    startup: ensure directories exist, attempt to preload the model
+    shutdown: clean up resources (no special cleanup needed currently)
     """
-    # ── 启动事件 ─────────────────────────────────────────────────────────────
+    # ── Startup event ─────────────────────────────────────────────────────────
     logger.info("=" * 60)
-    logger.info("  语音克隆服务 正在启动...")
+    logger.info("  Voice Cloning Service is starting...")
     logger.info("=" * 60)
 
-    # 记录启动时间（供健康检查计算 uptime）
+    # Record startup time (for uptime calculation in health check)
     health_router.set_start_time(time.time())
 
-    # 确保存储目录存在
+    # Ensure storage directories exist
     settings.ensure_directories()
-    logger.info(f"存储目录已就绪: {Path(settings.storage_dir).absolute()}")
+    logger.info(f"Storage directories ready: {Path(settings.storage_dir).absolute()}")
 
-    # 设置 HuggingFace 镜像源环境变量
+    # Set HuggingFace mirror environment variable
     import os
     os.environ["HF_ENDPOINT"] = settings.hf_endpoint
-    logger.info(f"HuggingFace 镜像源: {settings.hf_endpoint}")
+    logger.info(f"HuggingFace mirror endpoint: {settings.hf_endpoint}")
 
-    # 检查模型是否已下载
+    # Check whether the model has been downloaded
     model_path = Path(settings.model_dir) / "Fun-CosyVoice3-0.5B-2512"
     if model_path.exists():
-        logger.info(f"检测到预训练模型: {model_path}")
-        # 尝试预加载 TTS 引擎（后台异步，不阻塞服务启动）
+        logger.info(f"Pretrained model detected: {model_path}")
+        # Attempt to preload the TTS engine (non-blocking; service starts regardless)
         try:
             from app.core.tts_engine import TTSEngine
             engine = TTSEngine.get_instance(
@@ -61,34 +61,35 @@ async def lifespan(app: FastAPI):
             )
             loaded = engine.load_model()
             if loaded:
-                logger.info("TTS 模型预加载成功")
+                logger.info("TTS model preloaded successfully")
             else:
-                logger.warning("TTS 模型预加载失败（服务仍可启动，但合成功能不可用）")
+                logger.warning("TTS model preloading failed (service will still start, but synthesis is unavailable)")
         except Exception as e:
-            logger.warning(f"TTS 模型预加载异常: {e}")
+            logger.warning(f"TTS model preloading exception: {e}")
     else:
         logger.warning(
-            f"未找到预训练模型目录: {model_path}。"
-            "请运行 python setup/download_models.py 下载模型。"
+            f"Pretrained model directory not found: {model_path}. "
+            "Please run python setup/download_models.py to download the model."
         )
 
-    logger.info(f"服务已启动 | 地址: http://{settings.host}:{settings.port}")
-    logger.info(f"  - Web 界面:    http://{settings.host}:{settings.port}/")
-    logger.info(f"  - API 文档:    http://{settings.host}:{settings.port}/docs")
-    logger.info(f"  - 健康检查:    http://{settings.host}:{settings.port}/api/health")
+    logger.info(f"Service started | Address: http://{settings.host}:{settings.port}")
+    logger.info(f"  - Web UI:       http://{settings.host}:{settings.port}/")
+    logger.info(f"  - API docs:     http://{settings.host}:{settings.port}/docs")
+    logger.info(f"  - Health check: http://{settings.host}:{settings.port}/api/health")
 
-    yield  # 此处之后为 shutdown 事件
+    yield  # Everything after this point is the shutdown event
 
-    # ── 关闭事件 ─────────────────────────────────────────────────────────────
-    logger.info("服务正在关闭...")
+    # ── Shutdown event ────────────────────────────────────────────────────────
+    logger.info("Service is shutting down...")
 
 
-# ── 创建 FastAPI 应用 ────────────────────────────────────────────────────────
+# ── Create FastAPI application ────────────────────────────────────────────────
 app = FastAPI(
-    title="语音音色克隆服务",
+    title="Voice Cloning Service",
     description=(
-        "基于 CosyVoice3 的语音音色克隆训练服务。\n\n"
-        "通过上传 3~10 段参考音频，提取说话人音色特征并打包为 .voicepack 文件。"
+        "A voice cloning training service based on CosyVoice3.\n\n"
+        "Upload 3~10 reference audio clips to extract speaker voice features "
+        "and package them into a .voicepack file."
     ),
     version="1.0.0",
     lifespan=lifespan,
@@ -96,7 +97,7 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# ── CORS 配置（开发阶段允许所有来源）────────────────────────────────────────
+# ── CORS configuration (allow all origins during development) ─────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -105,67 +106,68 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── 全局异常处理 ─────────────────────────────────────────────────────────────
+# ── Global exception handler ──────────────────────────────────────────────────
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """
-    全局异常处理：捕获所有未处理的异常，返回友好的错误响应。
+    Global exception handler: catches all unhandled exceptions and returns
+    a friendly error response.
 
     Args:
-        request: HTTP 请求对象
-        exc: 捕获的异常
+        request: HTTP request object
+        exc: Caught exception
 
     Returns:
-        JSONResponse: 统一格式的错误响应
+        JSONResponse: Uniformly formatted error response
     """
-    logger.error(f"未处理的异常 | {request.method} {request.url}: {exc}", exc_info=True)
+    logger.error(f"Unhandled exception | {request.method} {request.url}: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
         content={
-            "error": "内部服务器错误",
+            "error": "Internal server error",
             "detail": str(exc),
             "path": str(request.url),
         },
     )
 
-# ── 注册 API 路由 ────────────────────────────────────────────────────────────
+# ── Register API routes ───────────────────────────────────────────────────────
 app.include_router(
     health_router.router,
     prefix="/api",
-    tags=["健康检查"],
+    tags=["Health Check"],
 )
 app.include_router(
     train_router.router,
     prefix="/api/train",
-    tags=["训练管理"],
+    tags=["Training Management"],
 )
 app.include_router(
     voices_router.router,
     prefix="/api/voices",
-    tags=["音色管理"],
+    tags=["Voice Management"],
 )
 
-# ── 静态文件（Web 管理界面）──────────────────────────────────────────────────
+# ── Static files (Web management UI) ─────────────────────────────────────────
 static_dir = Path("static")
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
     @app.get("/", include_in_schema=False)
     async def serve_index():
-        """返回 Web 管理界面主页"""
+        """Return the Web management UI home page"""
         index_file = static_dir / "index.html"
         if index_file.exists():
             return FileResponse(str(index_file))
         return JSONResponse(
-            content={"message": "语音克隆服务运行中", "docs": "/docs"},
+            content={"message": "Voice cloning service is running", "docs": "/docs"},
         )
 else:
     @app.get("/", include_in_schema=False)
     async def root():
         return JSONResponse(
             content={
-                "message": "语音克隆服务运行中",
+                "message": "Voice cloning service is running",
                 "docs": "/docs",
                 "health": "/api/health",
             }

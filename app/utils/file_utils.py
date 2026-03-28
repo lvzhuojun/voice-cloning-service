@@ -1,6 +1,6 @@
 """
-文件操作工具函数
-提供安全的文件上传、临时目录管理等通用功能。
+File operation utility functions
+Provides safe file upload handling, temporary directory management, and other common utilities.
 """
 
 import os
@@ -16,13 +16,13 @@ ALLOWED_AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac", ".w
 
 def is_allowed_audio_file(filename: str) -> bool:
     """
-    检查文件名是否为允许的音频格式。
+    Check whether a filename has an allowed audio format extension.
 
     Args:
-        filename: 文件名（含扩展名）
+        filename: File name (including extension)
 
     Returns:
-        bool: 允许的格式返回 True
+        bool: True if the format is allowed
     """
     ext = Path(filename).suffix.lower()
     return ext in ALLOWED_AUDIO_EXTENSIONS
@@ -30,23 +30,23 @@ def is_allowed_audio_file(filename: str) -> bool:
 
 def create_temp_dir(prefix: str = "voice_") -> str:
     """
-    创建唯一的临时目录。
+    Create a unique temporary directory.
 
     Args:
-        prefix: 目录名前缀
+        prefix: Directory name prefix
 
     Returns:
-        str: 临时目录的绝对路径
+        str: Absolute path of the temporary directory
     """
     return tempfile.mkdtemp(prefix=prefix)
 
 
 def cleanup_dir(dir_path: str) -> None:
     """
-    安全删除目录及其所有内容（出错时仅记录警告）。
+    Safely delete a directory and all its contents (logs a warning on error).
 
     Args:
-        dir_path: 要删除的目录路径
+        dir_path: Path of the directory to delete
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -54,27 +54,27 @@ def cleanup_dir(dir_path: str) -> None:
         if os.path.exists(dir_path):
             shutil.rmtree(dir_path)
     except Exception as e:
-        logger.warning(f"清理临时目录失败 ({dir_path}): {e}")
+        logger.warning(f"Failed to clean up temporary directory ({dir_path}): {e}")
 
 
 def get_audio_files_in_dir(directory: str) -> List[str]:
     """
-    扫描目录，返回所有允许格式的音频文件路径列表。
+    Scan a directory and return a list of paths for all audio files in allowed formats.
 
     Args:
-        directory: 要扫描的目录路径
+        directory: Directory path to scan
 
     Returns:
-        List[str]: 音频文件绝对路径列表（按文件名排序）
+        List[str]: Absolute paths of audio files (sorted by filename)
 
     Raises:
-        FileNotFoundError: 目录不存在
+        FileNotFoundError: Directory does not exist
     """
     dir_path = Path(directory)
     if not dir_path.exists():
-        raise FileNotFoundError(f"目录不存在: {directory}")
+        raise FileNotFoundError(f"Directory does not exist: {directory}")
     if not dir_path.is_dir():
-        raise ValueError(f"路径不是目录: {directory}")
+        raise ValueError(f"Path is not a directory: {directory}")
 
     audio_files = [
         str(p.absolute())
@@ -86,15 +86,15 @@ def get_audio_files_in_dir(directory: str) -> List[str]:
 
 def safe_filename(name: str) -> str:
     """
-    将用户输入的字符串转换为安全的文件名（去除特殊字符）。
+    Convert a user-supplied string to a safe filename (removes special characters).
 
     Args:
-        name: 原始名称
+        name: Original name
 
     Returns:
-        str: 安全的文件名（仅保留字母、数字、中文、连字符、下划线）
+        str: Safe filename (only letters, digits, Chinese characters, hyphens, underscores)
     """
     import re
-    # 保留中文字符、字母、数字、下划线、连字符
+    # Keep Chinese characters, letters, digits, underscores, hyphens
     safe = re.sub(r'[^\w\u4e00-\u9fff\-]', '_', name)
-    return safe[:64]  # 截断到合理长度
+    return safe[:64]  # Truncate to a reasonable length

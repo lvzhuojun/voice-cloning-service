@@ -1,6 +1,6 @@
 """
-音色管理 API 路由
-提供音色包的列表查询、详情获取、下载、删除和测试合成接口。
+Voice management API router
+Provides endpoints for listing, retrieving, downloading, deleting, and test-synthesizing voice packs.
 """
 
 from __future__ import annotations
@@ -18,13 +18,13 @@ router = APIRouter()
 
 
 def _get_manager():
-    """获取 VoicePackManager 实例（懒加载）"""
+    """Get a VoicePackManager instance (lazy loading)"""
     from app.core.voicepack_manager import VoicePackManager
     return VoicePackManager(storage_dir=settings.storage_dir)
 
 
 def _get_engine():
-    """获取 TTSEngine 单例（懒加载）"""
+    """Get the TTSEngine singleton (lazy loading)"""
     from app.core.tts_engine import TTSEngine
     return TTSEngine.get_instance(
         model_dir=settings.model_dir,
@@ -35,46 +35,46 @@ def _get_engine():
 @router.get(
     "/",
     response_model=VoiceListResponse,
-    summary="列出所有音色",
-    description="返回所有已训练音色的元数据列表（不含 embedding 向量），按创建时间降序排列。",
+    summary="List all voices",
+    description="Returns a metadata list of all trained voices (without embedding vectors), sorted by creation time (newest first).",
 )
 async def list_voices() -> VoiceListResponse:
     """
-    获取所有音色包列表。
+    Get a list of all voice packs.
 
     Returns:
-        VoiceListResponse: 包含音色总数和列表的响应
+        VoiceListResponse: Response containing total voice count and list
     """
     try:
         manager = _get_manager()
         voices = manager.list_all()
         return VoiceListResponse(total=len(voices), voices=voices)
     except Exception as e:
-        logger.error(f"获取音色列表失败: {e}")
+        logger.error(f"Failed to retrieve voice list: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取音色列表失败: {e}",
+            detail=f"Failed to retrieve voice list: {e}",
         )
 
 
 @router.get(
     "/{voice_id}",
     response_model=VoiceInfo,
-    summary="获取音色详情",
-    description="返回指定音色的完整元数据。",
+    summary="Get voice details",
+    description="Returns the complete metadata for the specified voice.",
 )
 async def get_voice(voice_id: str) -> VoiceInfo:
     """
-    获取指定音色的详细信息。
+    Get detailed information for the specified voice.
 
     Args:
-        voice_id: 音色的 UUID v4 字符串
+        voice_id: Voice UUID v4 string
 
     Returns:
-        VoiceInfo: 音色详细信息
+        VoiceInfo: Detailed voice information
 
     Raises:
-        HTTPException 404: 音色不存在
+        HTTPException 404: Voice does not exist
     """
     try:
         manager = _get_manager()
@@ -82,34 +82,34 @@ async def get_voice(voice_id: str) -> VoiceInfo:
     except FileNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"音色不存在: {voice_id}",
+            detail=f"Voice does not exist: {voice_id}",
         )
     except Exception as e:
-        logger.error(f"获取音色详情失败 ({voice_id}): {e}")
+        logger.error(f"Failed to retrieve voice details ({voice_id}): {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取音色详情失败: {e}",
+            detail=f"Failed to retrieve voice details: {e}",
         )
 
 
 @router.get(
     "/{voice_id}/download",
-    summary="下载音色包",
-    description="下载指定音色的 .voicepack 文件。",
+    summary="Download voice pack",
+    description="Download the .voicepack file for the specified voice.",
     response_class=FileResponse,
 )
 async def download_voice(voice_id: str):
     """
-    下载 .voicepack 文件。
+    Download a .voicepack file.
 
     Args:
-        voice_id: 音色的 UUID v4 字符串
+        voice_id: Voice UUID v4 string
 
     Returns:
-        FileResponse: .voicepack 文件下载响应
+        FileResponse: .voicepack file download response
 
     Raises:
-        HTTPException 404: 音色包文件不存在
+        HTTPException 404: Voice pack file does not exist
     """
     manager = _get_manager()
     voicepack_path = manager.get_voicepack_path(voice_id)
@@ -118,7 +118,7 @@ async def download_voice(voice_id: str):
     if not os.path.exists(voicepack_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"音色包文件不存在: {voice_id}",
+            detail=f"Voice pack file does not exist: {voice_id}",
         )
 
     return FileResponse(
@@ -132,19 +132,19 @@ async def download_voice(voice_id: str):
 @router.delete(
     "/{voice_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="删除音色",
-    description="永久删除指定音色包文件。此操作不可撤销。",
+    summary="Delete voice",
+    description="Permanently delete the specified voice pack file. This action cannot be undone.",
 )
 async def delete_voice(voice_id: str) -> None:
     """
-    删除指定音色包。
+    Delete the specified voice pack.
 
     Args:
-        voice_id: 音色的 UUID v4 字符串
+        voice_id: Voice UUID v4 string
 
     Raises:
-        HTTPException 404: 音色不存在
-        HTTPException 500: 删除失败
+        HTTPException 404: Voice does not exist
+        HTTPException 500: Deletion failed
     """
     try:
         manager = _get_manager()
@@ -152,51 +152,51 @@ async def delete_voice(voice_id: str) -> None:
         if not deleted:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"音色不存在: {voice_id}",
+                detail=f"Voice does not exist: {voice_id}",
             )
-        logger.info(f"音色已删除: {voice_id}")
+        logger.info(f"Voice deleted: {voice_id}")
     except HTTPException:
         raise
     except OSError as e:
-        logger.error(f"删除音色失败 ({voice_id}): {e}")
+        logger.error(f"Failed to delete voice ({voice_id}): {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"删除音色失败: {e}",
+            detail=f"Failed to delete voice: {e}",
         )
 
 
 @router.post(
     "/{voice_id}/test",
-    summary="测试音色合成",
-    description="使用指定音色合成一段测试语音，返回 WAV 音频文件。",
+    summary="Test voice synthesis",
+    description="Synthesize a test speech using the specified voice and return a WAV audio file.",
 )
 async def test_voice(voice_id: str, request: TestVoiceRequest) -> Response:
     """
-    使用指定音色合成测试语音。
+    Synthesize test speech using the specified voice.
 
     Args:
-        voice_id: 音色的 UUID v4 字符串
-        request: 合成参数（文字、语速、语言）
+        voice_id: Voice UUID v4 string
+        request: Synthesis parameters (text, speed, language)
 
     Returns:
-        Response: WAV 格式音频数据（Content-Type: audio/wav）
+        Response: WAV audio data (Content-Type: audio/wav)
 
     Raises:
-        HTTPException 404: 音色不存在
-        HTTPException 503: 模型未加载
-        HTTPException 500: 合成失败
+        HTTPException 404: Voice does not exist
+        HTTPException 503: Model not loaded
+        HTTPException 500: Synthesis failed
     """
-    # 检查音色是否存在
+    # Check whether the voice exists
     try:
         manager = _get_manager()
-        manager.get_info(voice_id)  # 若不存在会抛出 FileNotFoundError
+        manager.get_info(voice_id)  # Raises FileNotFoundError if not found
     except FileNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"音色不存在: {voice_id}",
+            detail=f"Voice does not exist: {voice_id}",
         )
 
-    # 执行合成
+    # Execute synthesis
     try:
         engine = _get_engine()
         wav_bytes = engine.synthesize(
@@ -216,18 +216,18 @@ async def test_voice(voice_id: str, request: TestVoiceRequest) -> Response:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except RuntimeError as e:
         error_msg = str(e)
-        if "模型未加载" in error_msg:
+        if "model is not loaded" in error_msg.lower() or "TTS model" in error_msg:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="TTS 模型未加载，请先运行 setup/download_models.py 下载模型并重启服务",
+                detail="TTS model is not loaded. Please run setup/download_models.py to download the model and restart the service.",
             )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"语音合成失败: {error_msg}",
+            detail=f"Speech synthesis failed: {error_msg}",
         )
     except Exception as e:
-        logger.error(f"测试合成失败 ({voice_id}): {e}")
+        logger.error(f"Test synthesis failed ({voice_id}): {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"语音合成失败: {e}",
+            detail=f"Speech synthesis failed: {e}",
         )

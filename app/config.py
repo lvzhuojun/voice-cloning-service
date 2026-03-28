@@ -1,7 +1,8 @@
 """
-配置管理模块
-从 .env 文件和环境变量读取所有配置项，提供全局 settings 单例。
-使用 pydantic-settings 自动完成类型转换和校验。
+Configuration management module
+Reads all configuration items from .env files and environment variables,
+and provides a global settings singleton.
+Uses pydantic-settings for automatic type conversion and validation.
 """
 
 import os
@@ -14,9 +15,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     """
-    全局配置类，字段自动从 .env 文件 / 环境变量读取。
+    Global configuration class; fields are automatically read from .env / environment variables.
 
-    优先级：环境变量 > .env 文件 > 字段默认值
+    Priority: environment variables > .env file > field defaults
     """
 
     model_config = SettingsConfigDict(
@@ -26,76 +27,76 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ── 服务配置 ────────────────────────────────────────────────────────────
-    host: str = Field(default="0.0.0.0", description="服务监听地址")
-    port: int = Field(default=8000, description="服务监听端口")
+    # ── Service configuration ────────────────────────────────────────────────
+    host: str = Field(default="0.0.0.0", description="Service listen address")
+    port: int = Field(default=8000, description="Service listen port")
 
-    # ── 存储目录 ────────────────────────────────────────────────────────────
+    # ── Storage directories ──────────────────────────────────────────────────
     model_dir: str = Field(
         default="storage/pretrained_models",
-        description="预训练模型存储目录",
+        description="Pretrained model storage directory",
     )
     storage_dir: str = Field(
         default="storage",
-        description="存储根目录（uploads / voicepacks 的父目录）",
+        description="Storage root directory (parent of uploads / voicepacks)",
     )
 
-    # ── HuggingFace 配置 ────────────────────────────────────────────────────
+    # ── HuggingFace configuration ────────────────────────────────────────────
     hf_endpoint: str = Field(
         default="https://hf-mirror.com",
-        description="HuggingFace 镜像源 URL",
+        description="HuggingFace mirror URL",
     )
 
-    # ── 日志配置 ────────────────────────────────────────────────────────────
-    log_level: str = Field(default="INFO", description="日志级别")
+    # ── Logging configuration ────────────────────────────────────────────────
+    log_level: str = Field(default="INFO", description="Log level")
 
-    # ── 上传限制 ────────────────────────────────────────────────────────────
+    # ── Upload limits ────────────────────────────────────────────────────────
     max_upload_size_mb: int = Field(
         default=100,
-        description="单文件上传大小限制（MB）",
+        description="Single-file upload size limit (MB)",
     )
     max_audio_duration_seconds: float = Field(
         default=60.0,
-        description="音频最大允许时长（秒）",
+        description="Maximum allowed audio duration (seconds)",
     )
     min_audio_duration_seconds: float = Field(
         default=3.0,
-        description="音频最小允许时长（秒）",
+        description="Minimum allowed audio duration (seconds)",
     )
 
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, v: str) -> str:
-        """验证日志级别合法性"""
+        """Validate that the log level is a legal value"""
         allowed = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
         if v.upper() not in allowed:
-            raise ValueError(f"log_level 必须为 {allowed} 之一，当前: {v}")
+            raise ValueError(f"log_level must be one of {allowed}, got: {v}")
         return v.upper()
 
     @property
     def uploads_dir(self) -> str:
-        """用户上传的临时音频目录"""
+        """Temporary audio directory for user uploads"""
         return os.path.join(self.storage_dir, "uploads")
 
     @property
     def voicepacks_dir(self) -> str:
-        """训练好的音色包存储目录"""
+        """Storage directory for trained voice packs"""
         return os.path.join(self.storage_dir, "voicepacks")
 
     @property
     def samples_dir(self) -> str:
-        """本地样本音频目录"""
+        """Local sample audio directory"""
         return os.path.join("data", "samples")
 
     @property
     def max_upload_size_bytes(self) -> int:
-        """上传大小限制（字节）"""
+        """Upload size limit (bytes)"""
         return self.max_upload_size_mb * 1024 * 1024
 
     def ensure_directories(self) -> None:
         """
-        确保所有必要的存储目录存在。
-        在服务启动时调用。
+        Ensure that all required storage directories exist.
+        Call this when the service starts.
         """
         dirs = [
             self.storage_dir,
@@ -108,6 +109,6 @@ class Settings(BaseSettings):
             Path(d).mkdir(parents=True, exist_ok=True)
 
 
-# 全局 settings 单例
-# 其他模块通过 `from app.config import settings` 引用
+# Global settings singleton
+# Other modules reference this via `from app.config import settings`
 settings = Settings()

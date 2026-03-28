@@ -1,12 +1,12 @@
 """
-Speaker Embedding 提取模块
-核心改进点：支持多段音频加权融合，提取更稳定的说话人特征向量。
+Speaker Embedding extraction module
+Key improvement: supports weighted fusion of multiple audio segments for more stable speaker feature vectors.
 
-与原始 CosyVoice 相比，本模块的关键改进：
-1. 从多个参考音频（3~10段）分别提取 embedding
-2. 按各段音频的信噪比（SNR）计算归一化权重
-3. 加权平均融合所有 embedding，得到更稳定的说话人表示
-4. 自动选择最适合推理参考的音频片段
+Compared with the original CosyVoice, the key improvements in this module are:
+1. Extract embeddings from multiple reference audio clips (3~10 segments) individually
+2. Compute normalized weights based on the SNR of each segment
+3. Fuse all embeddings via weighted averaging for a more stable speaker representation
+4. Automatically select the most suitable audio segment as the inference reference
 """
 
 from __future__ import annotations
@@ -26,25 +26,25 @@ from app.models.schemas import QualityReport
 
 logger = logging.getLogger(__name__)
 
-# ── CosyVoice3 speaker embedding 的标准维度 ───────────────────────────────────
-# Fun-CosyVoice3-0.5B-2512 使用 CAM++ 提取 192 维 speaker embedding
+# ── Standard dimension of CosyVoice3 speaker embeddings ──────────────────────
+# Fun-CosyVoice3-0.5B-2512 uses CAM++ to extract 192-dimensional speaker embeddings
 COSYVOICE_EMBEDDING_DIM = 192
 
-# 最优参考音频的目标时长范围（秒）
+# Target duration range for the optimal reference audio (seconds)
 REFERENCE_MIN_DURATION = 5.0
 REFERENCE_MAX_DURATION = 15.0
 
 
 class EmbeddingExtractor:
     """
-    说话人 Embedding 提取器。
+    Speaker embedding extractor.
 
-    封装 CosyVoice3 的 CAM++ 说话人编码器，支持：
-    - 单段音频 embedding 提取
-    - 多段音频加权融合
-    - 最优参考音频自动选取
+    Wraps the CosyVoice3 CAM++ speaker encoder and supports:
+    - Single-segment embedding extraction
+    - Multi-segment weighted fusion
+    - Automatic selection of the optimal reference audio
 
-    使用方式:
+    Usage:
         extractor = EmbeddingExtractor(model_dir="storage/pretrained_models")
         embedding, weights = extractor.extract_and_fuse(audio_dict, sample_rate)
     """
@@ -55,42 +55,42 @@ class EmbeddingExtractor:
         device: Optional[str] = None,
     ) -> None:
         """
-        初始化 Embedding 提取器，加载 CosyVoice3 模型。
+        Initialize the embedding extractor and load the CosyVoice3 model.
 
         Args:
-            model_dir: 预训练模型根目录路径
-            device: 推理设备（"cuda"/"cpu"，None 时自动选择）
+            model_dir: Pretrained model root directory path
+            device: Inference device ("cuda"/"cpu"; auto-selected if None)
 
         Raises:
-            RuntimeError: 模型加载失败
+            RuntimeError: Model loading failed
         """
         self.model_dir = model_dir
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._cosyvoice_model = None  # 延迟加载
+        self._cosyvoice_model = None  # Lazy load
         self._campplus_model = None   # CAM++ speaker encoder
         self._feature_extractor = None
 
-        logger.info(f"EmbeddingExtractor 初始化 | 设备: {self.device} | 模型目录: {model_dir}")
+        logger.info(f"EmbeddingExtractor initialized | Device: {self.device} | Model dir: {model_dir}")
 
     def _load_model(self) -> None:
         """
-        延迟加载 CosyVoice3 模型（首次调用时才加载，避免启动过慢）。
+        Lazily load the CosyVoice3 model (loaded on first call to avoid slow startup).
 
-        尝试顺序：
-        1. 从 storage/pretrained_models 加载完整 CosyVoice3 模型（含 CAM++）
-        2. 若模型未下载，使用预置的 ONNX CAM++ 模型（备用）
-        3. 若均不可用，降级到基于 spectral 特征的近似 embedding
+        Attempt order:
+        1. Load the full CosyVoice3 model (including CAM++) from storage/pretrained_models
+        2. If the model has not been downloaded, use the bundled ONNX CAM++ model (fallback)
+        3. If neither is available, fall back to spectral-feature-based approximate embeddings
 
         Raises:
-            RuntimeError: 所有加载方式均失败
+            RuntimeError: All loading methods failed
         """
         if self._campplus_model is not None:
-            return  # 已加载，跳过
+            return  # Already loaded; skip
 
         cosyvoice_dir = Path(self.model_dir) / "Fun-CosyVoice3-0.5B-2512"
         campplus_onnx = cosyvoice_dir / "campplus.onnx"
 
-        # ── 方式1：使用 ONNX CAM++ 模型提取 embedding ──────────────────────
+        # ── Method 1: extract embeddings using the ONNX CAM++ model ──────────
         if campplus_onnx.exists():
             try:
                 import onnxruntime as ort
@@ -104,37 +104,38 @@ class EmbeddingExtractor:
                     providers=providers,
                 )
                 self._load_feature_extractor()
-                logger.info(f"CAM++ ONNX 模型加载成功: {campplus_onnx}")
+                logger.info(f"CAM++ ONNX model loaded successfully: {campplus_onnx}")
                 return
             except Exception as e:
-                logger.warning(f"ONNX 加载失败，尝试备用方案: {e}")
+                logger.warning(f"ONNX loading failed; trying fallback: {e}")
 
-        # ── 方式2：尝试通过 CosyVoice Python 模块加载 ──────────────────────
+        # ── Method 2: try loading via the CosyVoice Python module ────────────
         try:
             self._load_cosyvoice_model(cosyvoice_dir)
             return
         except Exception as e:
-            logger.warning(f"CosyVoice 模型加载失败，使用近似 embedding: {e}")
+            logger.warning(f"CosyVoice model loading failed; using approximate embeddings: {e}")
 
-        # ── 方式3：降级到近似 embedding（开发/测试用，不依赖预训练模型）──────
+        # ── Method 3: fall back to approximate embeddings (for dev/testing; no pretrained model needed) ──
         logger.warning(
-            "未找到预训练模型，使用基于 MFCC 的近似 Embedding（效果有限，请下载模型后使用）"
+            "No pretrained model found; using MFCC-based approximate embeddings "
+            "(limited quality — please download the model for production use)"
         )
         self._campplus_model = "fallback"
 
     def _load_cosyvoice_model(self, cosyvoice_dir: Path) -> None:
         """
-        尝试通过 CosyVoice Python 模块加载完整模型。
+        Try to load the full model via the CosyVoice Python module.
 
         Args:
-            cosyvoice_dir: CosyVoice3 模型目录路径
+            cosyvoice_dir: CosyVoice3 model directory path
 
         Raises:
-            ImportError: CosyVoice 模块未安装
-            RuntimeError: 模型加载失败
+            ImportError: CosyVoice module not installed
+            RuntimeError: Model loading failed
         """
         try:
-            # CosyVoice 从源码安装时，需要将其路径加入 sys.path
+            # If CosyVoice is installed from source, add its path to sys.path
             import sys
             cosyvoice_src = Path(__file__).parents[3] / "CosyVoice"
             if cosyvoice_src.exists():
@@ -143,20 +144,20 @@ class EmbeddingExtractor:
             from cosyvoice.cli.cosyvoice import CosyVoice
             self._cosyvoice_model = CosyVoice(str(cosyvoice_dir))
             self._campplus_model = "cosyvoice"
-            logger.info("CosyVoice3 完整模型加载成功")
+            logger.info("CosyVoice3 full model loaded successfully")
         except ImportError as e:
-            raise ImportError(f"CosyVoice 模块未找到: {e}")
+            raise ImportError(f"CosyVoice module not found: {e}")
 
     def _load_feature_extractor(self) -> None:
         """
-        加载 Kaldi/torchaudio 特征提取器（用于 ONNX 推理前的特征计算）。
+        Load the Kaldi/torchaudio feature extractor (used for feature computation before ONNX inference).
         """
         try:
             import torchaudio.compliance.kaldi as kaldi
             self._feature_extractor = kaldi
-            logger.debug("Kaldi 特征提取器加载成功")
+            logger.debug("Kaldi feature extractor loaded successfully")
         except ImportError:
-            logger.debug("torchaudio 未安装，将使用 librosa 提取特征")
+            logger.debug("torchaudio not installed; will use librosa for feature extraction")
             self._feature_extractor = None
 
     def extract_single(
@@ -165,17 +166,17 @@ class EmbeddingExtractor:
         sample_rate: int,
     ) -> torch.Tensor:
         """
-        从单段音频提取 speaker embedding 向量。
+        Extract a speaker embedding vector from a single audio segment.
 
         Args:
-            audio: 音频数组（float32，单声道）
-            sample_rate: 采样率（Hz），建议 16000 或 22050
+            audio: Audio array (float32, mono)
+            sample_rate: Sample rate (Hz); 16000 or 22050 recommended
 
         Returns:
-            torch.Tensor: 形状为 (embedding_dim,) 的 float32 embedding 向量
+            torch.Tensor: float32 embedding vector with shape (embedding_dim,)
 
         Raises:
-            RuntimeError: 模型未加载或推理失败
+            RuntimeError: Model not loaded or inference failed
         """
         self._load_model()
 
@@ -184,7 +185,7 @@ class EmbeddingExtractor:
         elif self._campplus_model == "fallback":
             return self._extract_fallback(audio, sample_rate)
         else:
-            # ONNX 模式
+            # ONNX mode
             return self._extract_via_onnx(audio, sample_rate)
 
     def extract_and_fuse(
@@ -192,31 +193,32 @@ class EmbeddingExtractor:
         audio_quality_pairs: List[Tuple[np.ndarray, int, QualityReport]],
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
-        核心改进：从多段音频提取 embedding 后，按质量评分加权融合。
+        Core improvement: extract embeddings from multiple audio segments and fuse them
+        with quality-score-based weighting.
 
-        融合策略：
-        - 对每段音频独立提取 speaker embedding
-        - 以各段的 quality_score 作为权重（SNR 越高权重越大）
-        - 对所有 embedding 做归一化加权平均
-        - 对最终 embedding 做 L2 归一化（保持与模型一致的向量空间）
+        Fusion strategy:
+        - Extract speaker embeddings from each segment independently
+        - Use each segment's quality_score as its weight (higher SNR = higher weight)
+        - Compute a normalized weighted average of all embeddings
+        - Apply L2 normalization to the final embedding (consistent with the model's vector space)
 
         Args:
-            audio_quality_pairs: 列表，每元素为 (音频数组, 采样率, 质量报告)
+            audio_quality_pairs: List of (audio array, sample rate, quality report) tuples
 
         Returns:
             Tuple[torch.Tensor, Dict[str, float]]:
-                - 融合后的 embedding 向量，形状 (embedding_dim,)
-                - 各片段的权重字典 {"segment_0": 0.3, "segment_1": 0.7, ...}
+                - Fused embedding vector with shape (embedding_dim,)
+                - Weight dictionary for each segment: {"segment_0": 0.3, "segment_1": 0.7, ...}
 
         Raises:
-            ValueError: 输入为空列表
-            RuntimeError: embedding 提取失败
+            ValueError: Input is an empty list
+            RuntimeError: Embedding extraction failed
         """
         if not audio_quality_pairs:
-            raise ValueError("audio_quality_pairs 不能为空列表")
+            raise ValueError("audio_quality_pairs must not be an empty list")
 
         self._load_model()
-        logger.info(f"开始提取 embedding | 音频段数: {len(audio_quality_pairs)}")
+        logger.info(f"Starting embedding extraction | Number of audio segments: {len(audio_quality_pairs)}")
 
         embeddings = []
         quality_scores = []
@@ -225,55 +227,55 @@ class EmbeddingExtractor:
         for i, (audio, sr, quality_report) in enumerate(audio_quality_pairs):
             segment_key = f"segment_{i}"
             try:
-                # 提取单段 embedding
+                # Extract single-segment embedding
                 emb = self.extract_single(audio, sr)
                 embeddings.append(emb)
                 quality_scores.append(quality_report.quality_score)
                 logger.debug(
-                    f"  [{i+1}/{len(audio_quality_pairs)}] 提取成功 | "
-                    f"时长: {quality_report.duration_seconds:.1f}s | "
-                    f"质量: {quality_report.quality_score:.3f}"
+                    f"  [{i+1}/{len(audio_quality_pairs)}] Extraction successful | "
+                    f"Duration: {quality_report.duration_seconds:.1f}s | "
+                    f"Quality: {quality_report.quality_score:.3f}"
                 )
             except Exception as e:
-                logger.warning(f"  [{i+1}] 提取失败，跳过: {e}")
-                quality_scores.append(0.0)  # 失败的段权重为0
+                logger.warning(f"  [{i+1}] Extraction failed; skipping: {e}")
+                quality_scores.append(0.0)  # Failed segments get weight 0
 
         if not embeddings:
-            raise RuntimeError("所有音频段的 embedding 提取均失败")
+            raise RuntimeError("Embedding extraction failed for all audio segments")
 
-        # ── 计算归一化权重 ───────────────────────────────────────────────────
-        # 只对成功提取 embedding 的段计算权重
+        # ── Compute normalized weights ────────────────────────────────────────
+        # Compute weights only for segments that were successfully extracted
         successful_scores = [quality_scores[i] for i in range(len(audio_quality_pairs)) if i < len(embeddings)]
         total_score = sum(successful_scores)
 
         if total_score < 1e-8:
-            # 所有段质量分均为0，退化为均等权重
+            # All segment scores are 0; fall back to equal weights
             weights = [1.0 / len(embeddings)] * len(embeddings)
         else:
             weights = [s / total_score for s in successful_scores]
 
-        # 记录每段权重
+        # Record per-segment weights
         emb_idx = 0
         for i in range(len(audio_quality_pairs)):
             if emb_idx < len(embeddings):
                 weight_records[f"segment_{i}"] = round(weights[emb_idx], 4)
                 emb_idx += 1
 
-        # ── 加权平均融合 ─────────────────────────────────────────────────────
+        # ── Weighted average fusion ───────────────────────────────────────────
         stacked = torch.stack(embeddings, dim=0)  # (n, embedding_dim)
         weight_tensor = torch.tensor(weights, dtype=torch.float32)  # (n,)
         weight_tensor = weight_tensor.unsqueeze(1)                    # (n, 1)
 
         fused_embedding = (stacked * weight_tensor).sum(dim=0)  # (embedding_dim,)
 
-        # ── L2 归一化（保持与模型 embedding 空间一致）───────────────────────
+        # ── L2 normalization (consistent with the model's embedding space) ───
         norm = torch.norm(fused_embedding, p=2)
         if norm > 1e-8:
             fused_embedding = fused_embedding / norm
 
         logger.info(
-            f"Embedding 融合完成 | 有效段: {len(embeddings)} | "
-            f"维度: {fused_embedding.shape[0]} | 权重分布: {weight_records}"
+            f"Embedding fusion complete | Valid segments: {len(embeddings)} | "
+            f"Dimension: {fused_embedding.shape[0]} | Weight distribution: {weight_records}"
         )
 
         return fused_embedding, weight_records
@@ -283,26 +285,26 @@ class EmbeddingExtractor:
         audio_quality_pairs: List[Tuple[np.ndarray, int, QualityReport]],
     ) -> Tuple[np.ndarray, int, QualityReport]:
         """
-        从多段音频中选取最适合作为推理参考的一段。
+        Select the most suitable segment from multiple audio clips as the inference reference.
 
-        选取策略（按优先级）：
-        1. 时长在 REFERENCE_MIN~MAX_DURATION 范围内
-        2. 在满足时长条件的段中，选 quality_score 最高的
-        3. 若无时长合适的段，则直接选质量最高的
+        Selection strategy (by priority):
+        1. Duration within the REFERENCE_MIN~MAX_DURATION range
+        2. Among duration-eligible segments, choose the one with the highest quality_score
+        3. If no duration-eligible segment exists, choose the one with the highest quality score overall
 
         Args:
-            audio_quality_pairs: 列表，每元素为 (音频数组, 采样率, 质量报告)
+            audio_quality_pairs: List of (audio array, sample rate, quality report) tuples
 
         Returns:
-            Tuple[np.ndarray, int, QualityReport]: 最优 (音频, 采样率, 质量报告)
+            Tuple[np.ndarray, int, QualityReport]: Best (audio, sample rate, quality report)
 
         Raises:
-            ValueError: 输入为空列表
+            ValueError: Input is an empty list
         """
         if not audio_quality_pairs:
-            raise ValueError("audio_quality_pairs 不能为空列表")
+            raise ValueError("audio_quality_pairs must not be an empty list")
 
-        # 按时长和质量联合筛选
+        # Filter candidates by duration and quality
         candidates_with_duration = [
             (audio, sr, report)
             for audio, sr, report in audio_quality_pairs
@@ -310,20 +312,20 @@ class EmbeddingExtractor:
         ]
 
         if candidates_with_duration:
-            # 从时长合适的候选中选质量最高的
+            # Among duration-eligible candidates, choose the one with the highest quality
             best = max(candidates_with_duration, key=lambda x: x[2].quality_score)
         else:
-            # 无时长合适的候选，直接选质量最高的
+            # No duration-eligible candidates; choose the highest quality overall
             best = max(audio_quality_pairs, key=lambda x: x[2].quality_score)
 
         logger.info(
-            f"参考音频选取完成 | 时长: {best[2].duration_seconds:.1f}s | "
-            f"质量: {best[2].quality_score:.3f}"
+            f"Reference audio selected | Duration: {best[2].duration_seconds:.1f}s | "
+            f"Quality: {best[2].quality_score:.3f}"
         )
         return best
 
     # ══════════════════════════════════════════════════════════════════════════
-    # 内部推理方法
+    # Internal inference methods
     # ══════════════════════════════════════════════════════════════════════════
 
     def _extract_via_cosyvoice(
@@ -332,23 +334,23 @@ class EmbeddingExtractor:
         sample_rate: int,
     ) -> torch.Tensor:
         """
-        通过完整 CosyVoice3 模型提取 embedding（最高精度）。
+        Extract embedding via the full CosyVoice3 model (highest accuracy).
 
         Args:
-            audio: 音频数组（float32）
-            sample_rate: 采样率（Hz）
+            audio: Audio array (float32)
+            sample_rate: Sample rate (Hz)
 
         Returns:
-            torch.Tensor: (embedding_dim,) embedding 向量
+            torch.Tensor: (embedding_dim,) embedding vector
         """
         try:
-            # 将 numpy 音频写入临时文件供 CosyVoice 读取
+            # Write numpy audio to a temporary file for CosyVoice to read
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 import soundfile as sf
                 sf.write(tmp.name, audio, sample_rate)
                 tmp_path = tmp.name
 
-            # 使用 CosyVoice 内置的 speaker encoder 提取
+            # Use CosyVoice's built-in speaker encoder to extract the embedding
             spk_emb = self._cosyvoice_model.frontend.get_speaker_embedding(tmp_path)
             os.unlink(tmp_path)
 
@@ -358,8 +360,8 @@ class EmbeddingExtractor:
             return spk_emb.float().squeeze()
 
         except Exception as e:
-            logger.error(f"CosyVoice embedding 提取失败: {e}")
-            raise RuntimeError(f"embedding 提取失败: {e}") from e
+            logger.error(f"CosyVoice embedding extraction failed: {e}")
+            raise RuntimeError(f"Embedding extraction failed: {e}") from e
 
     def _extract_via_onnx(
         self,
@@ -367,26 +369,26 @@ class EmbeddingExtractor:
         sample_rate: int,
     ) -> torch.Tensor:
         """
-        通过 ONNX CAM++ 模型提取 embedding。
+        Extract embedding via the ONNX CAM++ model.
 
         Args:
-            audio: 音频数组（float32）
-            sample_rate: 采样率（Hz）
+            audio: Audio array (float32)
+            sample_rate: Sample rate (Hz)
 
         Returns:
-            torch.Tensor: (embedding_dim,) embedding 向量
+            torch.Tensor: (embedding_dim,) embedding vector
         """
-        # 重采样到 16kHz（CAM++ 标准输入）
+        # Resample to 16 kHz (CAM++ standard input)
         if sample_rate != 16000:
             import librosa
             audio_16k = librosa.resample(audio, orig_sr=sample_rate, target_sr=16000)
         else:
             audio_16k = audio
 
-        # 提取 Fbank 特征（80 dim，与 CAM++ 训练时一致）
+        # Extract Fbank features (80-dim, consistent with CAM++ training)
         features = self._extract_fbank_features(audio_16k, 16000)  # (T, 80)
 
-        # ONNX 推理
+        # ONNX inference
         input_name = self._campplus_model.get_inputs()[0].name
         features_input = features[np.newaxis, :, :].astype(np.float32)  # (1, T, 80)
 
@@ -395,7 +397,7 @@ class EmbeddingExtractor:
             embedding = torch.from_numpy(outputs[0]).squeeze()  # (192,)
             return embedding.float()
         except Exception as e:
-            raise RuntimeError(f"ONNX 推理失败: {e}") from e
+            raise RuntimeError(f"ONNX inference failed: {e}") from e
 
     def _extract_fallback(
         self,
@@ -403,33 +405,33 @@ class EmbeddingExtractor:
         sample_rate: int,
     ) -> torch.Tensor:
         """
-        降级方案：基于 MFCC 的近似 embedding（开发/测试用）。
+        Fallback method: MFCC-based approximate embeddings (for dev/testing only).
 
-        注意：此方案仅用于在未下载预训练模型时保持代码可运行，
-        效果远不如真正的 speaker encoder。
+        Note: This method is only used to keep the code runnable when no pretrained model
+        has been downloaded. Its quality is far inferior to a real speaker encoder.
 
         Args:
-            audio: 音频数组（float32）
-            sample_rate: 采样率（Hz）
+            audio: Audio array (float32)
+            sample_rate: Sample rate (Hz)
 
         Returns:
-            torch.Tensor: (COSYVOICE_EMBEDDING_DIM,) 近似 embedding
+            torch.Tensor: (COSYVOICE_EMBEDDING_DIM,) approximate embedding
         """
         import librosa
 
-        # 提取 MFCC（40 维）及其 delta 特征
+        # Extract MFCC (40-dim) and its delta features
         mfcc = librosa.feature.mfcc(y=audio, sr=sample_rate, n_mfcc=40)   # (40, T)
         delta = librosa.feature.delta(mfcc)                                 # (40, T)
         delta2 = librosa.feature.delta(mfcc, order=2)                       # (40, T)
 
-        # 拼接并时间维度均值池化 -> (120,)
+        # Concatenate and apply temporal mean pooling -> (120,)
         features = np.concatenate([
             mfcc.mean(axis=1),
             delta.mean(axis=1),
             delta2.mean(axis=1),
         ])  # (120,)
 
-        # 补零或截断到 COSYVOICE_EMBEDDING_DIM
+        # Zero-pad or truncate to COSYVOICE_EMBEDDING_DIM
         if len(features) < COSYVOICE_EMBEDDING_DIM:
             features = np.pad(features, (0, COSYVOICE_EMBEDDING_DIM - len(features)))
         else:
@@ -437,12 +439,12 @@ class EmbeddingExtractor:
 
         embedding = torch.from_numpy(features).float()
 
-        # L2 归一化
+        # L2 normalization
         norm = torch.norm(embedding, p=2)
         if norm > 1e-8:
             embedding = embedding / norm
 
-        logger.debug("使用 MFCC 近似 embedding（降级模式）")
+        logger.debug("Using MFCC approximate embeddings (fallback mode)")
         return embedding
 
     def _extract_fbank_features(
@@ -452,18 +454,18 @@ class EmbeddingExtractor:
         num_mel_bins: int = 80,
     ) -> np.ndarray:
         """
-        提取 Filter Bank 特征（用于 ONNX CAM++ 推理）。
+        Extract filter bank features (for ONNX CAM++ inference).
 
         Args:
-            audio: 音频数组（float32，16kHz）
-            sample_rate: 采样率（Hz），应为 16000
-            num_mel_bins: Mel 滤波器组数量（默认 80）
+            audio: Audio array (float32, 16 kHz)
+            sample_rate: Sample rate (Hz); should be 16000
+            num_mel_bins: Number of Mel filter banks (default 80)
 
         Returns:
-            np.ndarray: 形状 (T, num_mel_bins) 的 Fbank 特征矩阵
+            np.ndarray: Fbank feature matrix with shape (T, num_mel_bins)
         """
         if self._feature_extractor is not None:
-            # 使用 torchaudio/kaldi 提取（与训练时一致）
+            # Use torchaudio/kaldi for extraction (consistent with training)
             try:
                 waveform = torch.from_numpy(audio).unsqueeze(0)  # (1, T)
                 fbank = self._feature_extractor.fbank(
@@ -476,9 +478,9 @@ class EmbeddingExtractor:
                 )
                 return fbank.numpy()  # (T, 80)
             except Exception as e:
-                logger.warning(f"Kaldi fbank 提取失败，降级到 librosa: {e}")
+                logger.warning(f"Kaldi fbank extraction failed; falling back to librosa: {e}")
 
-        # 降级：使用 librosa 的 melspectrogram
+        # Fallback: use librosa melspectrogram
         import librosa
         mel = librosa.feature.melspectrogram(
             y=audio,
