@@ -1,0 +1,32 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# requirements-pip.txt
+# 本文件作为 environment.yml 的补充，列出所有需要通过 pip 安装的依赖。
+# 通常不需要手动执行，environment.yml 已自动引用。
+# 若需单独安装，在 conda 环境激活后执行：
+#   pip install -r requirements-pip.txt --index-url https://download.pytorch.org/whl/nightly/cu121
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── PyTorch（Blackwell RTX 5060 sm_120 需要 >= 2.7）──────────────────────────
+# --index-url https://download.pytorch.org/whl/nightly/cu121
+torch>=2.7.0.dev0
+torchaudio>=2.7.0.dev0
+torchvision>=0.22.0.dev0
+
+# ── HuggingFace ───────────────────────────────────────────────────────────────
+huggingface_hub>=0.22
+transformers>=4.40
+accelerate>=0.29
+
+# ── CosyVoice3 依赖 ───────────────────────────────────────────────────────────
+omegaconf>=2.3
+hydra-core>=1.3
+einops>=0.7
+conformer>=0.3.2
+diffusers>=0.27
+
+# ── 音频处理 ──────────────────────────────────────────────────────────────────
+ffmpeg-python>=0.2
+webrtcvad>=2.0.10
+
+# ── 异步 HTTP ─────────────────────────────────────────────────────────────────
+httpx>=0.27

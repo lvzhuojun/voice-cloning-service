@@ -1,0 +1,77 @@
+name: voice-cloning
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Channel 顺序说明：
+#   1. pytorch  - PyTorch 官方 channel，提供 torch / torchvision / torchaudio
+#   2. nvidia   - NVIDIA CUDA 相关库
+#   3. conda-forge - 高质量社区 channel，提供 librosa / soundfile 等音频库
+#   4. defaults - Anaconda 默认 channel
+# ─────────────────────────────────────────────────────────────────────────────
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+
+dependencies:
+  # ── Python 运行时 ──────────────────────────────────────────────────────────
+  - python=3.10
+
+  # ── 科学计算基础 ──────────────────────────────────────────────────────────
+  - numpy>=1.24
+  - scipy>=1.10
+
+  # ── 音频处理 ─────────────────────────────────────────────────────────────
+  # librosa 和 soundfile 从 conda-forge 安装，依赖更完整
+  - librosa>=0.10
+  - soundfile>=0.12
+  # ffmpeg 二进制工具（conda-forge 提供跨平台版本）
+  - ffmpeg>=6.0
+
+  # ── Web 框架相关 ──────────────────────────────────────────────────────────
+  - fastapi>=0.110
+  - uvicorn>=0.29
+  - python-multipart>=0.0.9
+  - aiofiles>=23.2
+
+  # ── 数据验证 ──────────────────────────────────────────────────────────────
+  - pydantic>=2.6
+  - pydantic-settings>=2.2
+
+  # ── 工具库 ────────────────────────────────────────────────────────────────
+  - python-dotenv>=1.0
+  - tqdm>=4.66
+  - requests>=2.31
+
+  # ── pip 安装的包（需要 PyTorch nightly / >= 2.7 以支持 RTX 5060 Blackwell）─
+  - pip
+  - pip:
+    # ── PyTorch >= 2.7 ────────────────────────────────────────────────────
+    # RTX 5060 为 Blackwell 架构 (compute capability sm_120)。
+    # PyTorch < 2.7 的稳定版本未编译 sm_120 CUDA kernel，会导致 GPU 无法识别。
+    # 使用 cu121 wheel：CUDA 13.x 向下兼容 CUDA 12.x Driver API，
+    # 因此 cu121 wheel 可在 CUDA 13.1 驱动下正常运行。
+    # 待 PyTorch >= 2.7 正式发布后，可替换为稳定版 wheel URL。
+    - --index-url https://download.pytorch.org/whl/nightly/cu121
+    - torch>=2.7.0.dev0
+    - torchaudio>=2.7.0.dev0
+    - torchvision>=0.22.0.dev0
+
+    # ── HuggingFace 生态 ──────────────────────────────────────────────────
+    - huggingface_hub>=0.22
+    - transformers>=4.40
+    - accelerate>=0.29
+
+    # ── CosyVoice3 依赖（从 pip 安装）────────────────────────────────────
+    - omegaconf>=2.3
+    - hydra-core>=1.3
+    - einops>=0.7
+    - conformer>=0.3.2
+    - diffusers>=0.27
+
+    # ── 音频额外处理 ──────────────────────────────────────────────────────
+    - ffmpeg-python>=0.2
+    - webrtcvad>=2.0.10
+
+    # ── HTTP 客户端（异步）────────────────────────────────────────────────
+    - httpx>=0.27
