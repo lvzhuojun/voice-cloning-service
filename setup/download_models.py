@@ -14,17 +14,15 @@ Usage:
 import os
 import sys
 import argparse
-import hashlib
 import json
 from pathlib import Path
-from typing import Optional
 
 # Set the environment variable before importing huggingface_hub so hf_hub uses the mirror.
 # Read from the environment variable; default to hf-mirror.com (China mirror).
 HF_ENDPOINT = os.environ.get("HF_ENDPOINT", "https://hf-mirror.com")
 os.environ["HF_ENDPOINT"] = HF_ENDPOINT
 
-# ── Color output ──────────────────────────────────────────────────────────────
+# ── Color output (ANSI escape codes are ASCII-safe) ───────────────────────────
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 RED = "\033[91m"
@@ -37,19 +35,19 @@ if sys.platform == "win32":
 
 
 def ok(msg: str) -> str:
-    return f"{GREEN}✓{RESET} {msg}"
+    return f"{GREEN}[OK]{RESET} {msg}"
 
 
 def warn(msg: str) -> str:
-    return f"{YELLOW}⚠{RESET} {msg}"
+    return f"{YELLOW}[WARN]{RESET} {msg}"
 
 
 def err(msg: str) -> str:
-    return f"{RED}✗{RESET} {msg}"
+    return f"{RED}[FAIL]{RESET} {msg}"
 
 
 def info(msg: str) -> str:
-    return f"{BLUE}ℹ{RESET} {msg}"
+    return f"{BLUE}[INFO]{RESET} {msg}"
 
 
 # ── Model configuration ───────────────────────────────────────────────────────
@@ -76,6 +74,7 @@ def check_huggingface_hub() -> bool:
         return True
     except ImportError:
         print(err("huggingface_hub is not installed. Please run setup/install.bat first."))
+        print(info("Or install manually: pip install huggingface_hub"))
         return False
 
 
@@ -89,17 +88,14 @@ def download_model(model_dir: str, force: bool = False) -> bool:
 
     Returns:
         bool: True if download succeeded
-
-    Raises:
-        RuntimeError: Raised when download fails
     """
-    from huggingface_hub import snapshot_download, hf_hub_download
-    from huggingface_hub import HfApi
+    from huggingface_hub import snapshot_download
 
     target_dir = Path(model_dir) / MODEL_DIR_NAME
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"\n{BOLD}Model download configuration{RESET}")
+    print("")
+    print(f"{BOLD}Model download configuration{RESET}")
     print(f"  Repository ID : {MODEL_REPO_ID}")
     print(f"  Target dir    : {target_dir.absolute()}")
     print(f"  HF endpoint   : {HF_ENDPOINT}")
@@ -109,8 +105,10 @@ def download_model(model_dir: str, force: bool = False) -> bool:
         print(ok("Model already fully downloaded. Skipping (use --force to re-download)."))
         return True
 
-    print(f"\n{BOLD}Starting model download...{RESET}")
-    print(info("Download is approximately 2 GB. Please be patient. Users in China should use hf-mirror.com."))
+    print("")
+    print(f"{BOLD}Starting model download...{RESET}")
+    print(info("Download is approximately 2 GB. Please be patient."))
+    print(info("Users in China should use hf-mirror.com (already set as default)."))
 
     try:
         # Use snapshot_download to download the entire repository.
@@ -119,7 +117,7 @@ def download_model(model_dir: str, force: bool = False) -> bool:
             repo_id=MODEL_REPO_ID,
             local_dir=str(target_dir),
             local_dir_use_symlinks=False,  # Windows does not support symlinks; use real files
-            ignore_patterns=["*.msgpack", "flax_model*", "tf_model*", "rust_model*"],  # Skip non-PyTorch formats
+            ignore_patterns=["*.msgpack", "flax_model*", "tf_model*", "rust_model*"],
         )
         print(ok(f"Model download complete: {local_dir}"))
 
@@ -139,7 +137,8 @@ def download_model(model_dir: str, force: bool = False) -> bool:
             return False
 
     # Verify integrity
-    print(f"\n{BOLD}Verifying file integrity...{RESET}")
+    print("")
+    print(f"{BOLD}Verifying file integrity...{RESET}")
     if _is_model_complete(str(target_dir)):
         print(ok("File integrity check passed"))
         _print_model_stats(str(target_dir))
@@ -269,9 +268,8 @@ Examples:
   HF_ENDPOINT=https://hf-mirror.com python setup/download_models.py
 
 Mirror notes:
-  For users in China, hf-mirror.com is recommended:
-  export HF_ENDPOINT=https://hf-mirror.com  (Linux/Mac)
-  set HF_ENDPOINT=https://hf-mirror.com     (Windows CMD)
+  For users in China, hf-mirror.com is recommended (already the default):
+  set HF_ENDPOINT=https://hf-mirror.com
         """
     )
     parser.add_argument(
@@ -294,9 +292,10 @@ def main() -> int:
     Returns:
         int: 0 for success, 1 for failure
     """
-    print(f"\n{BOLD}{'═' * 52}{RESET}")
-    print(f"{BOLD}  CosyVoice3 Model Download Script{RESET}")
-    print(f"{BOLD}{'═' * 52}{RESET}")
+    print("")
+    print("=" * 54)
+    print("  CosyVoice3 Model Download Script")
+    print("=" * 54)
     print(f"  HF endpoint: {HF_ENDPOINT}")
     print(info("To change the mirror, set the HF_ENDPOINT environment variable."))
 
@@ -311,11 +310,13 @@ def main() -> int:
 
     if success:
         save_download_info(args.model_dir)
-        print(f"\n{GREEN}{BOLD}✓ Model download complete!{RESET}")
+        print("")
+        print(f"{GREEN}{BOLD}[OK] Model download complete!{RESET}")
         print(info("Next step: copy .env.example to .env, then run start.bat to start the service."))
         return 0
     else:
-        print(f"\n{RED}{BOLD}✗ Model download failed. Please review the error messages above.{RESET}")
+        print("")
+        print(f"{RED}{BOLD}[FAIL] Model download failed. Please review the error messages above.{RESET}")
         return 1
 
 

@@ -73,11 +73,17 @@ echo  OK: PyTorch installed
 echo.
 echo [4/5] Installing project dependencies...
 
+:: Install huggingface_hub first (required by download_models.py)
+conda run -n voice-cloning pip install "huggingface_hub>=0.22.0"
+if %ERRORLEVEL% NEQ 0 (
+    echo  [WARN] huggingface_hub install had issues, continuing...
+)
+
 conda run -n voice-cloning pip install -r requirements-pip.txt
 
 if %ERRORLEVEL% NEQ 0 (
-    echo  [WARN] Some packages failed, retrying...
-    conda run -n voice-cloning pip install -r requirements-pip.txt
+    echo  [WARN] Some packages failed, retrying key packages...
+    conda run -n voice-cloning pip install huggingface_hub transformers fastapi uvicorn pydantic pydantic-settings librosa soundfile
 )
 echo  OK: dependencies installed
 
