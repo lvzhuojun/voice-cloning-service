@@ -3,145 +3,116 @@ chcp 65001 >nul 2>&1
 setlocal EnableDelayedExpansion
 
 echo.
-echo ════════════════════════════════════════════════════
+echo ════════════════════════════════════════════════════════════
 echo   语音克隆服务 - 一键安装脚本
-echo   Voice Cloning Service - Setup Script
-echo ════════════════════════════════════════════════════
+echo   环境：voice-cloning  /  Python 3.10  /  PyTorch 2.7 cu128
+echo   GPU：RTX 5060 Blackwell (sm_120) 已处理兼容性
+echo ════════════════════════════════════════════════════════════
 echo.
 
-:: ─────────────────────────────────────────────────────
-:: 步骤 1：检查 conda 是否已安装
-:: ─────────────────────────────────────────────────────
-echo [1/5] 检查 conda 安装...
-where conda >nul 2>&1
+:: ── 切换到项目根目录（不管从哪里双击都能正常运行）────────────────────────────
+cd /d "%~dp0\.."
+
+:: ════════════════════════════════════════════════════════════
+:: 步骤 1：检查 conda
+:: ════════════════════════════════════════════════════════════
+echo [步骤 1/5] 检查 conda...
+
+call conda --version >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
-    :: 尝试常见 conda 安装路径
-    set "CONDA_PATHS=%USERPROFILE%\anaconda3\Scripts\conda.exe;%USERPROFILE%\miniconda3\Scripts\conda.exe;C:\ProgramData\anaconda3\Scripts\conda.exe;C:\ProgramData\miniconda3\Scripts\conda.exe"
-    set "CONDA_FOUND=0"
-    for %%p in (!CONDA_PATHS!) do (
-        if exist "%%p" (
-            echo     找到 conda: %%p
-            set "CONDA_FOUND=1"
-            :: 将 conda 目录添加到临时 PATH
-            for %%d in ("%%p\..") do set "CONDA_SCRIPTS=%%~fd"
-            set "PATH=!CONDA_SCRIPTS!;!PATH!"
-            goto :conda_found
-        )
-    )
-    echo [错误] 未找到 conda！
     echo.
-    echo 请先安装 Anaconda 或 Miniconda：
-    echo   Miniconda (推荐): https://docs.conda.io/en/latest/miniconda.html
-    echo   Anaconda:         https://www.anaconda.com/
+    echo   [错误] 找不到 conda 命令！
     echo.
+    echo   请先安装 Miniconda（推荐，体积小）：
+    echo   https://docs.conda.io/en/latest/miniconda.html
+    echo.
+    echo   安装完成后请重新打开 Anaconda Prompt 再运行本脚本。
     pause
     exit /b 1
 )
-:conda_found
-echo     ✓ conda 已找到
+for /f "tokens=*" %%v in ('conda --version 2^>^&1') do echo   ✓ %%v
 
-:: ─────────────────────────────────────────────────────
-:: 步骤 2：初始化 conda（确保 conda activate 可用）
-:: ─────────────────────────────────────────────────────
+:: ════════════════════════════════════════════════════════════
+:: 步骤 2：创建 conda 环境（已存在则跳过）
+:: ════════════════════════════════════════════════════════════
 echo.
-echo [2/5] 初始化 conda...
-call conda init cmd.exe >nul 2>&1
+echo [步骤 2/5] 创建 conda 环境 voice-cloning (Python 3.10)...
 
-:: 直接使用 conda run 而不是 activate（更可靠的跨环境执行方式）
-:: 先检查环境是否已存在
-conda env list | findstr "voice-cloning" >nul 2>&1
+conda env list | findstr /C:"voice-cloning" >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
-    echo     ✓ conda 环境 'voice-cloning' 已存在，跳过创建
-    echo     提示：如需重建环境，请手动运行: conda env remove -n voice-cloning
-    goto :install_deps
+    echo   ✓ 环境已存在，跳过创建
+    echo     如需重建：conda env remove -n voice-cloning -y
+) else (
+    echo   正在创建，请稍候...
+    conda env create -f environment.yml
+    if %ERRORLEVEL% NEQ 0 (
+        echo.
+        echo   [错误] conda 环境创建失败！
+        echo   请检查 environment.yml 文件是否存在，以及网络是否正常。
+        pause
+        exit /b 1
+    )
+    echo   ✓ conda 环境创建成功
 )
 
-:: ─────────────────────────────────────────────────────
-:: 步骤 3：创建 conda 环境（Python 3.10）
-:: ─────────────────────────────────────────────────────
+:: ════════════════════════════════════════════════════════════
+:: 步骤 3：安装 PyTorch 2.7（cu128，支持 RTX 5060 Blackwell）
+:: ════════════════════════════════════════════════════════════
 echo.
-echo [3/5] 创建 conda 环境 'voice-cloning' (Python 3.10)...
-echo     这可能需要几分钟，请耐心等待...
-conda create -n voice-cloning python=3.10 -y
+echo [步骤 3/5] 安装 PyTorch 2.7 (cu128)...
+echo   RTX 5060 是 Blackwell 架构 sm_120，PyTorch 2.7+ 才原生支持。
+echo   cu128 = CUDA 12.8 编译版，可在 CUDA 13.x 驱动下正常运行。
+echo   正在从 pytorch CDN 下载（约 2.5GB，请耐心等待）...
+echo.
+
+conda run -n voice-cloning pip install ^
+    torch==2.7.0 torchvision torchaudio ^
+    --index-url https://download.pytorch.org/whl/cu128
+
 if %ERRORLEVEL% NEQ 0 (
-    echo [错误] conda 环境创建失败！
+    echo.
+    echo   [错误] PyTorch 安装失败！
+    echo.
+    echo   可能原因及解决方法：
+    echo   1. 网络超时 - 请重试，或使用代理
+    echo   2. 磁盘空间不足 - 需要约 5GB 空闲空间
+    echo   3. torch==2.7.0 不存在 - 尝试去掉版本号：
+    echo      conda run -n voice-cloning pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
     pause
     exit /b 1
 )
-echo     ✓ conda 环境创建成功
+echo   ✓ PyTorch 安装成功
 
-:install_deps
-:: ─────────────────────────────────────────────────────
-:: 步骤 4：安装依赖（从 environment.yml）
-:: ─────────────────────────────────────────────────────
+:: ════════════════════════════════════════════════════════════
+:: 步骤 4：安装其他 pip 依赖
+:: ════════════════════════════════════════════════════════════
 echo.
-echo [4/5] 安装项目依赖（含 PyTorch nightly for RTX 5060 Blackwell）...
-echo     注意：需要下载约 3-5GB 依赖，请确保网络畅通。
-echo     国内用户如遇下载慢，可提前配置 conda 镜像源。
-echo.
+echo [步骤 4/5] 安装项目依赖（FastAPI、HuggingFace 等）...
 
-:: 先安装 conda 依赖（排除 pip 部分，用于更快速的基础环境搭建）
-conda env update -n voice-cloning -f environment.yml --prune
+conda run -n voice-cloning pip install -r requirements-pip.txt
+
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo [警告] environment.yml 安装出错，尝试基础安装...
-    echo.
-
-    :: 备用：手动安装基础包
-    conda install -n voice-cloning -y ^
-        numpy scipy librosa soundfile ffmpeg ^
-        fastapi uvicorn python-multipart aiofiles ^
-        pydantic python-dotenv tqdm requests ^
-        -c conda-forge
-    if %ERRORLEVEL% NEQ 0 (
-        echo [错误] 基础依赖安装失败！
-        pause
-        exit /b 1
-    )
-
-    :: 安装 PyTorch nightly（RTX 5060 Blackwell sm_120 需要 >= 2.7）
-    echo.
-    echo     安装 PyTorch nightly (支持 RTX 5060 Blackwell/sm_120)...
-    conda run -n voice-cloning pip install torch torchaudio torchvision ^
-        --index-url https://download.pytorch.org/whl/nightly/cu121
-    if %ERRORLEVEL% NEQ 0 (
-        echo [错误] PyTorch 安装失败！
-        pause
-        exit /b 1
-    )
-
-    :: 安装其他 pip 依赖
-    conda run -n voice-cloning pip install ^
-        huggingface_hub transformers accelerate ^
-        omegaconf hydra-core einops conformer diffusers ^
-        ffmpeg-python httpx pydantic-settings
+    echo   [警告] 部分依赖安装失败，尝试跳过失败项继续...
+    conda run -n voice-cloning pip install -r requirements-pip.txt --ignore-requires-python
 )
+echo   ✓ 项目依赖安装完成
 
+:: ════════════════════════════════════════════════════════════
+:: 步骤 5：验证环境
+:: ════════════════════════════════════════════════════════════
 echo.
-echo     ✓ 依赖安装完成
+echo [步骤 5/5] 验证环境...
+echo.
 
-:: ─────────────────────────────────────────────────────
-:: 步骤 5：运行环境检测脚本
-:: ─────────────────────────────────────────────────────
-echo.
-echo [5/5] 运行环境检测...
-echo.
 conda run -n voice-cloning python setup/check_env.py
-if %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo [警告] 环境检测发现问题，请根据上方提示修复。
-    echo 某些问题（如模型未下载）不影响安装完成。
-)
 
-:: ─────────────────────────────────────────────────────
-:: 安装完成
-:: ─────────────────────────────────────────────────────
+:: ════════════════════════════════════════════════════════════
+:: 完成
+:: ════════════════════════════════════════════════════════════
 echo.
-echo ════════════════════════════════════════════════════
-echo   安装完成！
-echo ════════════════════════════════════════════════════
-echo.
-echo 下一步操作：
+echo ════════════════════════════════════════════════════════════
+echo   安装完成！下一步操作：
 echo.
 echo   1. 下载预训练模型（约 2GB）：
 echo      conda run -n voice-cloning python setup/download_models.py
@@ -151,7 +122,6 @@ echo      copy .env.example .env
 echo.
 echo   3. 启动服务：
 echo      start.bat
-echo.
-echo   4. 打开浏览器访问：http://localhost:8000
+echo ════════════════════════════════════════════════════════════
 echo.
 pause
