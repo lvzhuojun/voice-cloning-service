@@ -1,0 +1,60 @@
+# 预训练模型（体积过大，不纳入版本控制）
+storage/pretrained_models/
+
+# 用户上传的临时音频
+storage/uploads/
+
+# 训练好的音色包（生产数据，不纳入版本控制）
+storage/voicepacks/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 音色包文件
+*.voicepack
+
+# 环境配置（含密钥/路径等敏感信息）
+.env
+
+# Conda/pip 环境
+.conda/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 日志
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.temp
+temp/
+tmp/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Jupyter
+.ipynb_checkpoints/
+
+# pytest
+.coverage
+htmlcov/
