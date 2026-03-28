@@ -30,7 +30,8 @@ from app.core.voicepack_manager import VoicePackManager
 logger = logging.getLogger(__name__)
 
 # ── Synthesis output parameters ───────────────────────────────────────────────
-OUTPUT_SAMPLE_RATE = 22050      # CosyVoice3 output sample rate (Hz)
+OUTPUT_SAMPLE_RATE = 24000      # CosyVoice2 output sample rate (Hz)
+REFERENCE_SAMPLE_RATE = 16000   # CosyVoice2 expects reference audio at 16 kHz
 STREAM_CHUNK_SAMPLES = 4096     # Number of samples per chunk in streaming synthesis
 
 
@@ -311,24 +312,25 @@ class TTSEngine:
         """
         import sys
 
-        # If CosyVoice is installed from source, add its directory to the Python path
-        cosyvoice_src = Path(__file__).parents[3] / "CosyVoice"
+        # CosyVoice source must be cloned into <project_root>/CosyVoice/
+        # Run: git clone https://github.com/FunAudioLLM/CosyVoice.git
+        cosyvoice_src = Path(__file__).parents[2] / "CosyVoice"
         if cosyvoice_src.exists() and str(cosyvoice_src) not in sys.path:
             sys.path.insert(0, str(cosyvoice_src))
             logger.debug(f"Added CosyVoice source path to sys.path: {cosyvoice_src}")
 
         try:
-            from cosyvoice.cli.cosyvoice import CosyVoice
+            from cosyvoice.cli.cosyvoice import CosyVoice2
         except ImportError:
             raise ImportError(
-                "CosyVoice module not found. Please refer to the README to clone the CosyVoice submodule:\n"
-                "  git submodule add https://github.com/FunAudioLLM/CosyVoice.git\n"
-                "  git submodule update --init --recursive"
+                "CosyVoice module not found. Clone the source into CosyVoice/ directory:\n"
+                "  git clone https://github.com/FunAudioLLM/CosyVoice.git\n"
+                "  cd CosyVoice && pip install -r requirements.txt"
             )
 
-        logger.info(f"Loading CosyVoice3 model: {cosyvoice_dir}")
-        self._cosyvoice = CosyVoice(cosyvoice_dir)
-        logger.info("CosyVoice3 model loaded successfully")
+        logger.info(f"Loading CosyVoice2 model: {cosyvoice_dir}")
+        self._cosyvoice = CosyVoice2(cosyvoice_dir, load_jit=False, load_trt=False)
+        logger.info("CosyVoice2 model loaded successfully")
 
     def _run_inference(
         self,
@@ -356,19 +358,29 @@ class TTSEngine:
         if self._cosyvoice is None:
             raise RuntimeError("CosyVoice3 model is not initialized")
 
+        # CosyVoice2 requires reference audio at exactly 16 kHz
+        import librosa
+        if ref_sample_rate != REFERENCE_SAMPLE_RATE:
+            reference_audio = librosa.resample(
+                reference_audio.astype(np.float32),
+                orig_sr=ref_sample_rate,
+                target_sr=REFERENCE_SAMPLE_RATE,
+            )
+
         # Write reference audio to a temporary file (CosyVoice interface requires a file path)
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            sf.write(tmp.name, reference_audio, ref_sample_rate, subtype="PCM_16")
+            sf.write(tmp.name, reference_audio, REFERENCE_SAMPLE_RATE, subtype="PCM_16")
             tmp_path = tmp.name
 
         try:
-            # ── Call CosyVoice3 zero-shot cloning inference ───────────────────
-            # inference_zero_shot: input text + reference audio + speaker embedding
-            # Returns a dictionary generator containing the "tts_speech" key
-            for output in self._cosyvoice.inference_zero_shot(
+            # ── Call CosyVoice2 cross-lingual zero-shot inference ─────────────
+            # inference_cross_lingual: does not require a reference audio transcript.
+            # Reference audio must be at 16 kHz; the engine clones the speaker voice
+            # and synthesizes the target text in any language.
+            for output in self._cosyvoice.inference_cross_lingual(
                 tts_text=text,
                 prompt_speech_16k=tmp_path,
-                stream=True,
+                stream=False,
                 speed=speed,
             ):
                 if "tts_speech" in output:
@@ -377,9 +389,8 @@ class TTSEngine:
                         chunk = chunk.squeeze().cpu().numpy()
                     yield chunk.astype(np.float32)
 
-        except AttributeError:
-            # The model interface may differ across versions; try the fallback interface
-            logger.warning("inference_zero_shot interface unavailable; trying inference_instruct interface")
+        except Exception as e:
+            logger.warning(f"inference_cross_lingual failed: {e}; trying fallback")
             yield from self._run_inference_fallback(text, tmp_path, embedding, speed)
         finally:
             os.unlink(tmp_path)

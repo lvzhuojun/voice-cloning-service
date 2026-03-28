@@ -1,6 +1,9 @@
 # Claude Code local settings (never push to remote)
 .claude/
 
+# CosyVoice source (cloned separately, not part of this repo)
+CosyVoice/
+
 # Pretrained models (too large for version control)
 storage/pretrained_models/
 
