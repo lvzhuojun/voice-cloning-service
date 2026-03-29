@@ -13,9 +13,9 @@ from enum import Enum
 from pydantic import BaseModel, Field, field_validator
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ================================================================================
 # Enumerations
-# ══════════════════════════════════════════════════════════════════════════════
+# ================================================================================
 
 class Language(str, Enum):
     """Supported language enumeration"""
@@ -31,59 +31,9 @@ class TaskStatusEnum(str, Enum):
     FAILED = "failed"         # Failed
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Audio quality report
-# ══════════════════════════════════════════════════════════════════════════════
-
-class QualityReport(BaseModel):
-    """
-    Quality inspection report for a single audio segment.
-
-    Attributes:
-        duration_seconds: Audio duration in seconds
-        duration_ok: Whether the duration is within the allowed range (3~60 s)
-        snr_db: Estimated signal-to-noise ratio (dB); higher is better
-        quality_score: Overall quality score (0.0~1.0)
-        has_long_silence: Whether there is a continuous silence segment longer than 2 s
-        sample_rate: Original sample rate (Hz)
-        channels: Number of channels
-        warnings: List of quality warnings (human-readable)
-    """
-    duration_seconds: float = Field(description="Audio duration in seconds")
-    duration_ok: bool = Field(description="Whether the duration is within the allowed range")
-    snr_db: float = Field(description="Estimated signal-to-noise ratio (dB)")
-    quality_score: float = Field(ge=0.0, le=1.0, description="Overall quality score (0.0~1.0)")
-    has_long_silence: bool = Field(description="Whether there is a continuous silence segment longer than 2 s")
-    sample_rate: int = Field(description="Original sample rate (Hz)")
-    channels: int = Field(description="Number of channels (1=mono, 2=stereo)")
-    warnings: List[str] = Field(default_factory=list, description="List of quality warnings")
-
-
-class BatchProcessReport(BaseModel):
-    """
-    Summary report for batch audio processing.
-
-    Attributes:
-        total_files: Total number of audio files processed
-        success_count: Number of successfully processed files
-        failed_count: Number of files that failed processing
-        total_duration_seconds: Total duration of successfully processed files
-        average_quality_score: Average quality score
-        file_reports: Detailed quality report per file (keyed by filename)
-        errors: Files that failed processing along with their error messages
-    """
-    total_files: int = Field(description="Total number of files processed")
-    success_count: int = Field(description="Number of successfully processed files")
-    failed_count: int = Field(description="Number of failed files")
-    total_duration_seconds: float = Field(description="Total duration of successful files (seconds)")
-    average_quality_score: float = Field(ge=0.0, le=1.0, description="Average quality score")
-    file_reports: Dict[str, QualityReport] = Field(default_factory=dict, description="Quality report per file")
-    errors: Dict[str, str] = Field(default_factory=dict, description="Failed files and their error messages")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
+# ================================================================================
 # Training-related
-# ══════════════════════════════════════════════════════════════════════════════
+# ================================================================================
 
 class TrainFromFolderRequest(BaseModel):
     """
@@ -145,38 +95,36 @@ class TaskStatus(BaseModel):
     updated_at: datetime = Field(description="Last update time")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ================================================================================
 # Voice information
-# ══════════════════════════════════════════════════════════════════════════════
+# ================================================================================
 
 class VoiceInfo(BaseModel):
     """
-    Basic information about a voice pack (without embedding data; used for list display).
+    Information about a trained voice model (GPT-SoVITS).
 
     Attributes:
         voice_id: UUID v4 unique identifier
         voice_name: User-defined name
         created_at: Creation time (ISO 8601)
-        model_type: Model type (cosyvoice3)
-        model_version: Model version
         language: Primary language
-        sample_count: Number of reference audio segments used for training
-        total_duration_seconds: Total duration of reference audio
-        embedding_dim: Embedding vector dimension
-        quality_score: Overall audio quality score (0.0~1.0)
-        voicepack_size_bytes: .voicepack file size in bytes
+        audio_duration_seconds: Total training audio duration
+        training_epochs_gpt: Number of GPT training epochs
+        training_epochs_sovits: Number of SoVITS training epochs
+        gpt_model_file: GPT checkpoint filename
+        sovits_model_file: SoVITS model filename
+        base_model_version: Base model version string
     """
     voice_id: str = Field(description="UUID v4 voice unique identifier")
     voice_name: str = Field(description="User-defined name")
     created_at: str = Field(description="Creation time (ISO 8601)")
-    model_type: str = Field(description="Model type")
-    model_version: str = Field(description="Model version")
     language: str = Field(description="Primary language")
-    sample_count: int = Field(description="Number of reference audio segments")
-    total_duration_seconds: float = Field(description="Total duration of reference audio (seconds)")
-    embedding_dim: int = Field(description="Embedding vector dimension")
-    quality_score: float = Field(ge=0.0, le=1.0, description="Overall audio quality score")
-    voicepack_size_bytes: Optional[int] = Field(default=None, description=".voicepack file size in bytes")
+    audio_duration_seconds: float = Field(default=0.0, description="Total training audio duration (seconds)")
+    training_epochs_gpt: int = Field(default=0, description="GPT training epochs")
+    training_epochs_sovits: int = Field(default=0, description="SoVITS training epochs")
+    gpt_model_file: str = Field(description="GPT checkpoint filename")
+    sovits_model_file: str = Field(description="SoVITS model filename")
+    base_model_version: str = Field(default="GPT-SoVITS v2", description="Base model version")
 
 
 class VoiceListResponse(BaseModel):
@@ -191,9 +139,9 @@ class VoiceListResponse(BaseModel):
     voices: List[VoiceInfo] = Field(description="List of voices")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ================================================================================
 # TTS synthesis
-# ══════════════════════════════════════════════════════════════════════════════
+# ================================================================================
 
 class TestVoiceRequest(BaseModel):
     """
@@ -214,9 +162,9 @@ class TestVoiceRequest(BaseModel):
     language: Language = Field(default=Language.ZH, description="Synthesis language")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ================================================================================
 # Health check
-# ══════════════════════════════════════════════════════════════════════════════
+# ================================================================================
 
 class GPUInfo(BaseModel):
     """
@@ -241,14 +189,14 @@ class HealthResponse(BaseModel):
     Attributes:
         status: Service status (ok/degraded/error)
         version: Service version
-        model_loaded: Whether the model is loaded
+        gptsovits_ready: Whether GPT-SoVITS directory exists
         gpu_info: GPU information
         voice_count: Number of trained voices
         uptime_seconds: Service uptime in seconds
     """
     status: str = Field(description="Service status (ok/degraded/error)")
-    version: str = Field(default="1.0.0", description="Service version")
-    model_loaded: bool = Field(description="Whether the model is loaded")
+    version: str = Field(default="2.0.0", description="Service version")
+    gptsovits_ready: bool = Field(description="Whether GPT-SoVITS directory exists")
     gpu_info: Optional[GPUInfo] = Field(default=None, description="GPU information")
     voice_count: int = Field(description="Number of trained voices")
     uptime_seconds: float = Field(description="Service uptime in seconds")

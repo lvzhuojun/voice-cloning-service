@@ -4,21 +4,27 @@
 # CosyVoice source (cloned separately, not part of this repo)
 CosyVoice/
 
+# GPT-SoVITS source (cloned separately, not part of this repo)
+GPT-SoVITS/
+
 # Pretrained models (too large for version control)
 storage/pretrained_models/
 
-# 用户上传的临时音频
+# Trained voice models (production data, not tracked)
+storage/models/
+
+# User-uploaded temporary audio
 storage/uploads/
 
-# 训练用音频样本（个人录音，不进仓库）
+# Training audio samples (personal recordings, not tracked)
 data/samples/*/
-# 保留 README.md 说明文件
+# Keep README.md description file
 !data/samples/README.md
 
-# 训练好的音色包（生产数据，不纳入版本控制）
+# Trained voice packs (legacy, production data)
 storage/voicepacks/
 
-# Python 缓存
+# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
@@ -29,13 +35,13 @@ dist/
 build/
 .eggs/
 
-# 音色包文件
+# Voice pack files (legacy)
 *.voicepack
 
-# 环境配置（含密钥/路径等敏感信息）
+# Environment config (contains secrets/paths)
 .env
 
-# Conda/pip 环境
+# Conda/pip environment
 .conda/
 *.egg
 
@@ -46,11 +52,11 @@ build/
 *.swo
 *~
 
-# 日志
+# Logs
 *.log
 logs/
 
-# 临时文件
+# Temp files
 *.tmp
 *.temp
 temp/
