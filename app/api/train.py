@@ -34,6 +34,46 @@ from app.utils.file_utils import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+
+def _transcribe_audio(audio: "np.ndarray", sample_rate: int, language: str) -> Optional[str]:
+    """
+    Transcribe audio array to text using Whisper.
+    Returns None if transcription fails.
+    """
+    import io
+    import tempfile
+    import numpy as np
+    import soundfile as sf
+
+    try:
+        import whisper
+    except ImportError:
+        logger.warning("openai-whisper not installed; skipping transcription")
+        return None
+
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            sf.write(tmp.name, audio.astype(np.float32), sample_rate, subtype="PCM_16")
+            tmp_path = tmp.name
+
+        model = whisper.load_model("base")
+        lang = "zh" if language == "zh" else "en"
+        result = model.transcribe(tmp_path, language=lang, fp16=False)
+        text = result.get("text", "").strip()
+
+        import os
+        os.unlink(tmp_path)
+
+        return text if text else None
+    except Exception as e:
+        logger.warning(f"Whisper transcription failed: {e}")
+        try:
+            import os
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+        return None
+
 # ── In-memory task status store ───────────────────────────────────────────────
 # In production, replace with Redis or a database; a dict is used here for simplicity
 _task_store: Dict[str, TaskStatus] = {}
@@ -144,6 +184,14 @@ def _run_training_pipeline(
             f"Duration: {best_report.duration_seconds:.1f}s | Quality: {best_report.quality_score:.3f}"
         )
 
+        # ── Stage 3.5: Transcribe reference audio with Whisper ────────────────
+        _update_task(task_id, TaskStatusEnum.PROCESSING, 78, "Transcribing reference audio...")
+        prompt_text = _transcribe_audio(best_audio, best_sr, language)
+        if prompt_text:
+            logger.info(f"[{task_id}] Transcription: {prompt_text[:80]}")
+        else:
+            logger.warning(f"[{task_id}] Transcription failed; will use cross-lingual mode")
+
         # ── Stage 4: Pack .voicepack ──────────────────────────────────────────
         _update_task(task_id, TaskStatusEnum.PROCESSING, 85, "Packing voice pack...")
 
@@ -157,6 +205,7 @@ def _run_training_pipeline(
             sample_count=batch_report.success_count,
             total_duration_seconds=batch_report.total_duration_seconds,
             quality_score=batch_report.average_quality_score,
+            prompt_text=prompt_text,
         )
 
         logger.info(f"[{task_id}] Voice pack packed successfully | voice_id: {voice_id}")

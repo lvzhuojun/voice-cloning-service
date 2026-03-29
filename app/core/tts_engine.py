@@ -206,6 +206,7 @@ class TTSEngine:
         # Load voice pack
         logger.info(f"Synthesizing speech | voice_id: {voice_id} | Text length: {len(text)}")
         embedding, reference_audio, ref_sr, metadata, _ = self.voicepack_manager.unpack(voice_id)
+        prompt_text = metadata.get("prompt_text", "") or ""
 
         try:
             with self._inference_lock:
@@ -217,6 +218,7 @@ class TTSEngine:
                         ref_sample_rate=ref_sr,
                         speed=speed,
                         language=language,
+                        prompt_text=prompt_text,
                     )
                 )
         except Exception as e:
@@ -274,6 +276,7 @@ class TTSEngine:
                 raise RuntimeError("TTS model is not loaded. Please download the model and restart the service.")
 
         embedding, reference_audio, ref_sr, metadata, _ = self.voicepack_manager.unpack(voice_id)
+        prompt_text = metadata.get("prompt_text", "") or ""
         logger.info(f"Streaming synthesis started | voice_id: {voice_id}")
 
         try:
@@ -284,6 +287,7 @@ class TTSEngine:
                 ref_sample_rate=ref_sr,
                 speed=speed,
                 language=language,
+                prompt_text=prompt_text,
             ):
                 # Convert each chunk to WAV bytes (no WAV header; raw PCM)
                 chunk_int16 = (chunk * 32767).astype(np.int16)
@@ -344,9 +348,13 @@ class TTSEngine:
         ref_sample_rate: int,
         speed: float,
         language: str,
+        prompt_text: str = "",
     ) -> Generator[np.ndarray, None, None]:
         """
         Run CosyVoice3 inference; yield audio array chunks.
+
+        Uses inference_zero_shot (with transcript) when prompt_text is available,
+        otherwise falls back to inference_cross_lingual.
 
         Args:
             text: Synthesis text
@@ -355,6 +363,7 @@ class TTSEngine:
             ref_sample_rate: Reference audio sample rate
             speed: Speech speed
             language: Language
+            prompt_text: Reference audio transcript (improves quality when available)
 
         Yields:
             np.ndarray: float32 audio array chunks
@@ -377,16 +386,27 @@ class TTSEngine:
             tmp_path = tmp.name
 
         try:
-            # ── Call CosyVoice2 cross-lingual zero-shot inference ─────────────
-            # inference_cross_lingual: does not require a reference audio transcript.
-            # Reference audio must be at 16 kHz; the engine clones the speaker voice
-            # and synthesizes the target text in any language.
-            for output in self._cosyvoice.inference_cross_lingual(
-                tts_text=text,
-                prompt_wav=tmp_path,
-                stream=False,
-                speed=speed,
-            ):
+            if prompt_text:
+                # ── inference_zero_shot: uses reference transcript for better quality ──
+                logger.info("Using inference_zero_shot (transcript available)")
+                inference_iter = self._cosyvoice.inference_zero_shot(
+                    tts_text=text,
+                    prompt_text=prompt_text,
+                    prompt_wav=tmp_path,
+                    stream=False,
+                    speed=speed,
+                )
+            else:
+                # ── inference_cross_lingual: no transcript needed ─────────────
+                logger.info("Using inference_cross_lingual (no transcript)")
+                inference_iter = self._cosyvoice.inference_cross_lingual(
+                    tts_text=text,
+                    prompt_wav=tmp_path,
+                    stream=False,
+                    speed=speed,
+                )
+
+            for output in inference_iter:
                 if "tts_speech" in output:
                     chunk = output["tts_speech"]
                     if isinstance(chunk, torch.Tensor):
@@ -394,7 +414,7 @@ class TTSEngine:
                     yield chunk.astype(np.float32)
 
         except Exception as e:
-            logger.warning(f"inference_cross_lingual failed: {e}; trying fallback")
+            logger.warning(f"Inference failed: {e}; trying fallback")
             yield from self._run_inference_fallback(text, tmp_path, embedding, speed)
         finally:
             os.unlink(tmp_path)

@@ -93,6 +93,7 @@ class VoicePackManager:
         total_duration_seconds: float = 0.0,
         quality_score: float = 0.0,
         voice_id: Optional[str] = None,
+        prompt_text: Optional[str] = None,
     ) -> str:
         """
         Pack the speaker embedding and reference audio into a .voicepack file.
@@ -180,6 +181,7 @@ class VoicePackManager:
                     "total_duration_seconds": round(total_duration_seconds, 3),
                     "embedding_dim": embedding_dim,
                     "quality_score": round(quality_score, 4),
+                    "prompt_text": prompt_text or "",
                 }
                 zf.writestr(
                     f"{voice_id}/metadata.json",
