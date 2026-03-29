@@ -108,6 +108,27 @@ def _update_task(
         task.updated_at = datetime.now(timezone.utc)
 
 
+def _select_best_reference(
+    audio_quality_pairs: list,
+    min_duration: float = 5.0,
+    max_duration: float = 15.0,
+) -> tuple:
+    """
+    Select the best reference audio segment from processed audio clips.
+
+    Priority:
+    1. Duration within [min_duration, max_duration] AND highest quality score
+    2. If no segment meets duration criteria, fall back to highest quality score overall
+    """
+    candidates = [
+        (audio, sr, report)
+        for audio, sr, report in audio_quality_pairs
+        if min_duration <= report.duration_seconds <= max_duration
+    ]
+    pool = candidates if candidates else audio_quality_pairs
+    return max(pool, key=lambda x: x[2].quality_score)
+
+
 def _run_training_pipeline(
     task_id: str,
     audio_files: List[str],
@@ -116,13 +137,14 @@ def _run_training_pipeline(
     temp_dir: Optional[str] = None,
 ) -> None:
     """
-    Main training pipeline function (executed as a background task).
+    Voice pack creation pipeline (executed as a background task).
 
+    This is a zero-shot pipeline — no model weights are updated.
     Workflow:
-    1. Batch preprocess audio (format conversion + quality detection + denoising)
-    2. Extract and fuse speaker embeddings
-    3. Select the optimal reference audio
-    4. Pack as a .voicepack file
+    1. Preprocess uploaded audio (format conversion, quality scoring)
+    2. Select the best reference audio segment (5-15s, highest SNR)
+    3. Transcribe reference audio with Whisper (enables higher-quality synthesis)
+    4. Pack reference audio + transcript into a .voicepack file
 
     Args:
         task_id: Task ID
@@ -131,13 +153,14 @@ def _run_training_pipeline(
         language: Language code
         temp_dir: Temporary directory path (cleaned up after processing)
     """
+    import torch
+
     try:
         from app.core.audio_processor import AudioProcessor
-        from app.core.embedding_extractor import EmbeddingExtractor
         from app.core.voicepack_manager import VoicePackManager
 
         # ── Stage 1: Audio preprocessing ─────────────────────────────────────
-        _update_task(task_id, TaskStatusEnum.PROCESSING, 10, "Preprocessing audio...")
+        _update_task(task_id, TaskStatusEnum.PROCESSING, 20, "Preprocessing audio...")
         logger.info(f"[{task_id}] Starting audio preprocessing, file count: {len(audio_files)}")
 
         processor = AudioProcessor(
@@ -157,47 +180,40 @@ def _run_training_pipeline(
             f"Succeeded: {batch_report.success_count}/{batch_report.total_files}"
         )
 
-        # ── Stage 2: Extract speaker embedding ───────────────────────────────
-        _update_task(task_id, TaskStatusEnum.PROCESSING, 40, "Extracting speaker features...")
-        logger.info(f"[{task_id}] Starting speaker embedding extraction")
-
-        extractor = EmbeddingExtractor(
-            model_dir=settings.model_dir,
-        )
-
-        # Build (audio, sr, quality_report) triple list
+        # Build (audio, sr, quality_report) list
         audio_quality_pairs = [
             (audio, sr, batch_report.file_reports[fname])
             for fname, (audio, sr) in processed_audio.items()
             if fname in batch_report.file_reports
         ]
 
-        fused_embedding, weight_records = extractor.extract_and_fuse(audio_quality_pairs)
-        logger.info(f"[{task_id}] Embedding fusion complete | Dimension: {fused_embedding.shape[0]}")
+        # ── Stage 2: Select optimal reference audio ───────────────────────────
+        _update_task(task_id, TaskStatusEnum.PROCESSING, 50, "Selecting optimal reference audio...")
 
-        # ── Stage 3: Select optimal reference audio ───────────────────────────
-        _update_task(task_id, TaskStatusEnum.PROCESSING, 70, "Selecting optimal reference audio...")
-
-        best_audio, best_sr, best_report = extractor.select_reference_audio(audio_quality_pairs)
+        best_audio, best_sr, best_report = _select_best_reference(audio_quality_pairs)
         logger.info(
             f"[{task_id}] Reference audio selected | "
             f"Duration: {best_report.duration_seconds:.1f}s | Quality: {best_report.quality_score:.3f}"
         )
 
-        # ── Stage 3.5: Transcribe reference audio with Whisper ────────────────
-        _update_task(task_id, TaskStatusEnum.PROCESSING, 78, "Transcribing reference audio...")
+        # ── Stage 3: Transcribe reference audio with Whisper ─────────────────
+        # The transcript is used by inference_zero_shot for better synthesis quality.
+        _update_task(task_id, TaskStatusEnum.PROCESSING, 65, "Transcribing reference audio (Whisper)...")
         prompt_text = _transcribe_audio(best_audio, best_sr, language)
         if prompt_text:
             logger.info(f"[{task_id}] Transcription: {prompt_text[:80]}")
         else:
-            logger.warning(f"[{task_id}] Transcription failed; will use cross-lingual mode")
+            logger.warning(f"[{task_id}] Transcription failed; synthesis will use cross-lingual mode")
 
         # ── Stage 4: Pack .voicepack ──────────────────────────────────────────
-        _update_task(task_id, TaskStatusEnum.PROCESSING, 85, "Packing voice pack...")
+        _update_task(task_id, TaskStatusEnum.PROCESSING, 88, "Packing voice pack...")
+
+        # Placeholder embedding (not used in synthesis; CosyVoice3 extracts its own)
+        placeholder_embedding = torch.zeros(192)
 
         manager = VoicePackManager(storage_dir=settings.storage_dir)
         voice_id = manager.pack(
-            embedding=fused_embedding,
+            embedding=placeholder_embedding,
             reference_audio=best_audio,
             reference_sample_rate=best_sr,
             voice_name=voice_name,
