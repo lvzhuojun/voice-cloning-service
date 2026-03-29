@@ -137,9 +137,12 @@ class EmbeddingExtractor:
         try:
             # If CosyVoice is installed from source, add its path to sys.path
             import sys
-            cosyvoice_src = Path(__file__).parents[3] / "CosyVoice"
-            if cosyvoice_src.exists():
+            cosyvoice_src = Path(__file__).parents[2] / "CosyVoice"
+            matcha_src = cosyvoice_src / "third_party" / "Matcha-TTS"
+            if cosyvoice_src.exists() and str(cosyvoice_src) not in sys.path:
                 sys.path.insert(0, str(cosyvoice_src))
+            if matcha_src.exists() and str(matcha_src) not in sys.path:
+                sys.path.insert(0, str(matcha_src))
 
             from cosyvoice.cli.cosyvoice import CosyVoice
             self._cosyvoice_model = CosyVoice(str(cosyvoice_dir))

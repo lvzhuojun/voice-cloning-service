@@ -315,9 +315,13 @@ class TTSEngine:
         # CosyVoice source must be cloned into <project_root>/CosyVoice/
         # Run: git clone https://github.com/FunAudioLLM/CosyVoice.git
         cosyvoice_src = Path(__file__).parents[2] / "CosyVoice"
+        matcha_src = cosyvoice_src / "third_party" / "Matcha-TTS"
         if cosyvoice_src.exists() and str(cosyvoice_src) not in sys.path:
             sys.path.insert(0, str(cosyvoice_src))
             logger.debug(f"Added CosyVoice source path to sys.path: {cosyvoice_src}")
+        if matcha_src.exists() and str(matcha_src) not in sys.path:
+            sys.path.insert(0, str(matcha_src))
+            logger.debug(f"Added Matcha-TTS source path to sys.path: {matcha_src}")
 
         try:
             from cosyvoice.cli.cosyvoice import CosyVoice2
@@ -379,7 +383,7 @@ class TTSEngine:
             # and synthesizes the target text in any language.
             for output in self._cosyvoice.inference_cross_lingual(
                 tts_text=text,
-                prompt_speech_16k=tmp_path,
+                prompt_wav=tmp_path,
                 stream=False,
                 speed=speed,
             ):

@@ -11,7 +11,11 @@ echo.
 
 :: Activate conda env
 echo [1/3] Activating conda env voice-cloning...
-call conda activate voice-cloning
+call D:\Anaconda3\Scripts\activate.bat voice-cloning 2>nul
+if %ERRORLEVEL% NEQ 0 (
+    call conda activate voice-cloning 2>nul
+)
+where python >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo.
     echo  [ERROR] Cannot activate voice-cloning env!
