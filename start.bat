@@ -39,7 +39,7 @@ if exist ".pid" (
 :: Also free port 8000 in case .pid is stale
 echo.
 echo  Checking port 8000...
-for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr /R "0\.0\.0\.0:8000 \|127\.0\.0\.1:8000 \|\[::\]:8000 "') do (
+for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":8000 "') do (
     echo  INFO: Releasing port 8000 (PID %%a)...
     taskkill /F /PID %%a >nul 2>&1
 )
