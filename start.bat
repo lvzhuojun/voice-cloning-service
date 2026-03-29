@@ -5,7 +5,7 @@ chcp 65001 >nul
 cd /d "%~dp0"
 
 :: Direct path to the conda env Python - no activation needed
-set PYTHON=D:\Anaconda3\envs\voice-cloning\Scripts\python.exe
+set PYTHON=D:\Anaconda3\envs\voice-cloning\python.exe
 
 echo.
 echo ============================================================
