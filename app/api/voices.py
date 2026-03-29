@@ -1,11 +1,15 @@
 """
 Voice management API router
-Provides endpoints for listing, retrieving, downloading, deleting, and test-synthesizing voice packs.
+Provides endpoints for listing, retrieving, downloading, deleting, and
+test-synthesizing GPT-SoVITS voice models.
 """
 
 from __future__ import annotations
 
+import io
 import logging
+import zipfile
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -18,36 +22,47 @@ router = APIRouter()
 
 
 def _get_manager():
-    """Get a VoicePackManager instance (lazy loading)"""
-    from app.core.voicepack_manager import VoicePackManager
-    return VoicePackManager(storage_dir=settings.storage_dir)
+    """Get a VoiceManager instance (lazy loading)."""
+    from app.core.voice_manager import VoiceManager
+    return VoiceManager(storage_dir=settings.storage_dir)
 
 
 def _get_engine():
-    """Get the TTSEngine singleton (lazy loading)"""
+    """Get the TTSEngine singleton (lazy loading)."""
     from app.core.tts_engine import TTSEngine
     return TTSEngine.get_instance(
-        model_dir=settings.model_dir,
-        storage_dir=settings.storage_dir,
+        gptsovits_dir=settings.gptsovits_dir,
+        pretrained_dir=settings.pretrained_gptsovits_dir,
+        models_dir=settings.models_dir,
     )
 
+
+# ================================================================================
+# List / Get
+# ================================================================================
 
 @router.get(
     "/",
     response_model=VoiceListResponse,
     summary="List all voices",
-    description="Returns a metadata list of all trained voices (without embedding vectors), sorted by creation time (newest first).",
+    description="Returns a list of all trained GPT-SoVITS voices, sorted by creation time (newest first).",
 )
 async def list_voices() -> VoiceListResponse:
     """
-    Get a list of all voice packs.
+    Get a list of all voice models.
 
     Returns:
-        VoiceListResponse: Response containing total voice count and list
+        VoiceListResponse: Total count and list of VoiceInfo objects
     """
     try:
         manager = _get_manager()
-        voices = manager.list_all()
+        raw_list = manager.list_all()
+        voices = []
+        for meta in raw_list:
+            try:
+                voices.append(VoiceInfo(**meta))
+            except Exception as e:
+                logger.warning(f"Skipping malformed voice metadata: {e}")
         return VoiceListResponse(total=len(voices), voices=voices)
     except Exception as e:
         logger.error(f"Failed to retrieve voice list: {e}")
@@ -61,17 +76,17 @@ async def list_voices() -> VoiceListResponse:
     "/{voice_id}",
     response_model=VoiceInfo,
     summary="Get voice details",
-    description="Returns the complete metadata for the specified voice.",
+    description="Returns metadata for the specified voice model.",
 )
 async def get_voice(voice_id: str) -> VoiceInfo:
     """
-    Get detailed information for the specified voice.
+    Get detailed information for a specific voice.
 
     Args:
-        voice_id: Voice UUID v4 string
+        voice_id: Voice UUID string
 
     Returns:
-        VoiceInfo: Detailed voice information
+        VoiceInfo: Voice metadata
 
     Raises:
         HTTPException 404: Voice does not exist
@@ -92,55 +107,22 @@ async def get_voice(voice_id: str) -> VoiceInfo:
         )
 
 
-@router.get(
-    "/{voice_id}/download",
-    summary="Download voice pack",
-    description="Download the .voicepack file for the specified voice.",
-    response_class=FileResponse,
-)
-async def download_voice(voice_id: str):
-    """
-    Download a .voicepack file.
-
-    Args:
-        voice_id: Voice UUID v4 string
-
-    Returns:
-        FileResponse: .voicepack file download response
-
-    Raises:
-        HTTPException 404: Voice pack file does not exist
-    """
-    manager = _get_manager()
-    voicepack_path = manager.get_voicepack_path(voice_id)
-
-    import os
-    if not os.path.exists(voicepack_path):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Voice pack file does not exist: {voice_id}",
-        )
-
-    return FileResponse(
-        path=voicepack_path,
-        media_type="application/zip",
-        filename=f"{voice_id}.voicepack",
-        headers={"Content-Disposition": f'attachment; filename="{voice_id}.voicepack"'},
-    )
-
+# ================================================================================
+# Delete
+# ================================================================================
 
 @router.delete(
     "/{voice_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete voice",
-    description="Permanently delete the specified voice pack file. This action cannot be undone.",
+    description="Permanently delete the specified voice model and all its files. This cannot be undone.",
 )
 async def delete_voice(voice_id: str) -> None:
     """
-    Delete the specified voice pack.
+    Delete the specified voice model.
 
     Args:
-        voice_id: Voice UUID v4 string
+        voice_id: Voice UUID string
 
     Raises:
         HTTPException 404: Voice does not exist
@@ -154,6 +136,12 @@ async def delete_voice(voice_id: str) -> None:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Voice does not exist: {voice_id}",
             )
+        # Evict from TTS engine cache if loaded
+        try:
+            engine = _get_engine()
+            engine.evict_cache(voice_id)
+        except Exception:
+            pass
         logger.info(f"Voice deleted: {voice_id}")
     except HTTPException:
         raise
@@ -165,17 +153,21 @@ async def delete_voice(voice_id: str) -> None:
         )
 
 
+# ================================================================================
+# Test synthesis
+# ================================================================================
+
 @router.post(
     "/{voice_id}/test",
     summary="Test voice synthesis",
-    description="Synthesize a test speech using the specified voice and return a WAV audio file.",
+    description="Synthesize a test speech using the specified GPT-SoVITS voice and return a WAV file.",
 )
 async def test_voice(voice_id: str, request: TestVoiceRequest) -> Response:
     """
     Synthesize test speech using the specified voice.
 
     Args:
-        voice_id: Voice UUID v4 string
+        voice_id: Voice UUID string
         request: Synthesis parameters (text, speed, language)
 
     Returns:
@@ -183,27 +175,26 @@ async def test_voice(voice_id: str, request: TestVoiceRequest) -> Response:
 
     Raises:
         HTTPException 404: Voice does not exist
-        HTTPException 503: Model not loaded
+        HTTPException 503: GPT-SoVITS not ready
         HTTPException 500: Synthesis failed
     """
-    # Check whether the voice exists
+    # Check that voice exists
     try:
         manager = _get_manager()
-        manager.get_info(voice_id)  # Raises FileNotFoundError if not found
+        manager.get_metadata(voice_id)
     except FileNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Voice does not exist: {voice_id}",
         )
 
-    # Execute synthesis
+    # Run synthesis
     try:
         engine = _get_engine()
         wav_bytes = engine.synthesize(
             text=request.text,
             voice_id=voice_id,
             speed=request.speed,
-            language=request.language.value,
         )
         return Response(
             content=wav_bytes,
@@ -216,10 +207,13 @@ async def test_voice(voice_id: str, request: TestVoiceRequest) -> Response:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except RuntimeError as e:
         error_msg = str(e)
-        if "model is not loaded" in error_msg.lower() or "TTS model" in error_msg:
+        if "not cloned" in error_msg.lower() or "GPT-SoVITS directory" in error_msg:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="TTS model is not loaded. Please run setup/download_models.py to download the model and restart the service.",
+                detail=(
+                    "GPT-SoVITS is not set up. "
+                    "Please run: bash setup/clone_gptsovits.sh && python setup/download_models.py"
+                ),
             )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -231,3 +225,141 @@ async def test_voice(voice_id: str, request: TestVoiceRequest) -> Response:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Speech synthesis failed: {e}",
         )
+
+
+# ================================================================================
+# Downloads
+# ================================================================================
+
+@router.get(
+    "/{voice_id}/download/gpt",
+    summary="Download GPT model",
+    description="Download the GPT (s1) checkpoint file for the specified voice.",
+)
+async def download_gpt_model(voice_id: str):
+    """
+    Download the GPT checkpoint (.ckpt) for a voice.
+
+    Args:
+        voice_id: Voice UUID string
+
+    Returns:
+        FileResponse: .ckpt file download
+
+    Raises:
+        HTTPException 404: Voice or GPT model file not found
+    """
+    manager = _get_manager()
+    paths = manager.get_model_paths(voice_id)
+    gpt_path = paths["gpt"]
+
+    if not gpt_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"GPT model file not found for voice: {voice_id}",
+        )
+
+    filename = f"{voice_id}_gpt.ckpt"
+    return FileResponse(
+        path=str(gpt_path),
+        media_type="application/octet-stream",
+        filename=filename,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get(
+    "/{voice_id}/download/sovits",
+    summary="Download SoVITS model",
+    description="Download the SoVITS (s2G) generator weights for the specified voice.",
+)
+async def download_sovits_model(voice_id: str):
+    """
+    Download the SoVITS generator weights (.pth) for a voice.
+
+    Args:
+        voice_id: Voice UUID string
+
+    Returns:
+        FileResponse: .pth file download
+
+    Raises:
+        HTTPException 404: Voice or SoVITS model file not found
+    """
+    manager = _get_manager()
+    paths = manager.get_model_paths(voice_id)
+    sovits_path = paths["sovits"]
+
+    if not sovits_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"SoVITS model file not found for voice: {voice_id}",
+        )
+
+    filename = f"{voice_id}_sovits.pth"
+    return FileResponse(
+        path=str(sovits_path),
+        media_type="application/octet-stream",
+        filename=filename,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get(
+    "/{voice_id}/download/all",
+    summary="Download all voice files as ZIP",
+    description="Download a ZIP archive containing GPT model, SoVITS model, and metadata.json.",
+)
+async def download_all(voice_id: str) -> StreamingResponse:
+    """
+    Download all voice model files as a ZIP archive.
+
+    Contents:
+        - {voice_id}_gpt.ckpt
+        - {voice_id}_sovits.pth
+        - metadata.json
+        - reference.wav (if present)
+
+    Args:
+        voice_id: Voice UUID string
+
+    Returns:
+        StreamingResponse: ZIP file stream
+
+    Raises:
+        HTTPException 404: Voice does not exist
+    """
+    manager = _get_manager()
+
+    if not manager.voice_exists(voice_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Voice does not exist: {voice_id}",
+        )
+
+    paths = manager.get_model_paths(voice_id)
+    voice_dir = paths["dir"]
+
+    # Build ZIP in memory
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        files_to_include = [
+            paths["gpt"],
+            paths["sovits"],
+            paths["metadata"],
+            paths["reference"],
+        ]
+        for file_path in files_to_include:
+            if file_path.exists():
+                zf.write(str(file_path), arcname=file_path.name)
+
+    zip_buffer.seek(0)
+    zip_filename = f"{voice_id}_voice_model.zip"
+
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{zip_filename}"',
+        },
+    )

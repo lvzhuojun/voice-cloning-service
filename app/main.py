@@ -1,6 +1,7 @@
 """
 FastAPI application entry point
 Registers all routes, configures CORS, exception handling, and startup events.
+GPT-SoVITS based voice cloning service.
 """
 
 import logging
@@ -19,7 +20,7 @@ from app.api import voices as voices_router
 from app.config import settings
 from app.utils.logger import setup_logging
 
-# ── Configure logging (after all imports, before FastAPI initialization) ──────
+# -- Configure logging ---------------------------------------------------------
 setup_logging(level=settings.log_level)
 logger = logging.getLogger(__name__)
 
@@ -28,76 +29,82 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """
     FastAPI application lifecycle management.
-    startup: ensure directories exist, attempt to preload the model
-    shutdown: clean up resources (no special cleanup needed currently)
+    startup: ensure directories exist, check GPT-SoVITS availability
+    shutdown: clean up resources
     """
-    # ── Startup event ─────────────────────────────────────────────────────────
+    # -- Startup ---------------------------------------------------------------
     logger.info("=" * 60)
-    logger.info("  Voice Cloning Service is starting...")
+    logger.info("  Voice Cloning Service (GPT-SoVITS) is starting...")
     logger.info("=" * 60)
 
-    # Record startup time (for uptime calculation in health check)
+    # Record startup time
     health_router.set_start_time(time.time())
 
     # Ensure storage directories exist
     settings.ensure_directories()
     logger.info(f"Storage directories ready: {Path(settings.storage_dir).absolute()}")
 
-    # Set HuggingFace mirror environment variable
+    # Set HuggingFace mirror
     import os
     os.environ["HF_ENDPOINT"] = settings.hf_endpoint
-    logger.info(f"HuggingFace mirror endpoint: {settings.hf_endpoint}")
+    logger.info(f"HuggingFace endpoint: {settings.hf_endpoint}")
 
-    # Check whether the model has been downloaded
-    model_path = Path(settings.model_dir) / "Fun-CosyVoice3-0.5B-2512"
-    if model_path.exists():
-        logger.info(f"Pretrained model detected: {model_path}")
-        # Attempt to preload the TTS engine (non-blocking; service starts regardless)
-        try:
-            from app.core.tts_engine import TTSEngine
-            engine = TTSEngine.get_instance(
-                model_dir=settings.model_dir,
-                storage_dir=settings.storage_dir,
-            )
-            loaded = engine.load_model()
-            if loaded:
-                logger.info("TTS model preloaded successfully")
-            else:
-                logger.warning("TTS model preloading failed (service will still start, but synthesis is unavailable)")
-        except Exception as e:
-            logger.warning(f"TTS model preloading exception: {e}")
+    # Check GPT-SoVITS availability
+    gptsovits_path = Path(settings.gptsovits_dir)
+    if gptsovits_path.exists():
+        logger.info(f"GPT-SoVITS directory found: {gptsovits_path.absolute()}")
     else:
         logger.warning(
-            f"Pretrained model directory not found: {model_path}. "
-            "Please run python setup/download_models.py to download the model."
+            f"GPT-SoVITS directory not found: {gptsovits_path.absolute()}\n"
+            "Training and synthesis will be unavailable until GPT-SoVITS is cloned.\n"
+            "Run: bash setup/clone_gptsovits.sh"
         )
 
-    logger.info(f"Service started | Address: http://{settings.host}:{settings.port}")
-    logger.info(f"  - Web UI:       http://{settings.host}:{settings.port}/")
-    logger.info(f"  - API docs:     http://{settings.host}:{settings.port}/docs")
-    logger.info(f"  - Health check: http://{settings.host}:{settings.port}/api/health")
+    # Check pretrained models
+    pretrained_path = Path(settings.pretrained_gptsovits_dir)
+    if pretrained_path.exists():
+        logger.info(f"GPT-SoVITS pretrained models found: {pretrained_path.absolute()}")
+    else:
+        logger.warning(
+            f"GPT-SoVITS pretrained models not found: {pretrained_path.absolute()}\n"
+            "Run: python setup/download_models.py"
+        )
 
-    yield  # Everything after this point is the shutdown event
+    # Log available voices
+    try:
+        from app.core.voice_manager import VoiceManager
+        manager = VoiceManager(storage_dir=settings.storage_dir)
+        voice_count = len(manager.list_all())
+        logger.info(f"Available trained voices: {voice_count}")
+    except Exception:
+        pass
 
-    # ── Shutdown event ────────────────────────────────────────────────────────
+    logger.info(f"Service started | http://{settings.host}:{settings.port}")
+    logger.info(f"  Web UI:       http://{settings.host}:{settings.port}/")
+    logger.info(f"  API docs:     http://{settings.host}:{settings.port}/docs")
+    logger.info(f"  Health check: http://{settings.host}:{settings.port}/api/health")
+
+    yield  # Shutdown follows
+
+    # -- Shutdown --------------------------------------------------------------
     logger.info("Service is shutting down...")
 
 
-# ── Create FastAPI application ────────────────────────────────────────────────
+# -- Create FastAPI application ------------------------------------------------
 app = FastAPI(
     title="Voice Cloning Service",
     description=(
-        "A voice cloning training service based on CosyVoice3.\n\n"
-        "Upload 3~10 reference audio clips to extract speaker voice features "
-        "and package them into a .voicepack file."
+        "A voice cloning service based on GPT-SoVITS real fine-tuning.\n\n"
+        "Upload 1-3 minutes of reference audio to fine-tune a personal voice model. "
+        "Synthesize speech with the trained model via the /api/voices/{voice_id}/test endpoint."
     ),
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
 )
 
-# ── CORS configuration (allow all origins during development) ─────────────────
+# -- CORS configuration --------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -106,21 +113,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Global exception handler ──────────────────────────────────────────────────
 
+# -- Global exception handler --------------------------------------------------
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """
-    Global exception handler: catches all unhandled exceptions and returns
-    a friendly error response.
-
-    Args:
-        request: HTTP request object
-        exc: Caught exception
-
-    Returns:
-        JSONResponse: Uniformly formatted error response
-    """
+    """Catch all unhandled exceptions and return a friendly error response."""
     logger.error(f"Unhandled exception | {request.method} {request.url}: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
@@ -131,7 +128,8 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
         },
     )
 
-# ── Register API routes ───────────────────────────────────────────────────────
+
+# -- Register API routes -------------------------------------------------------
 app.include_router(
     health_router.router,
     prefix="/api",
@@ -148,14 +146,14 @@ app.include_router(
     tags=["Voice Management"],
 )
 
-# ── Static files (Web management UI) ─────────────────────────────────────────
+# -- Static files (Web management UI) ------------------------------------------
 static_dir = Path("static")
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
     @app.get("/", include_in_schema=False)
     async def serve_index():
-        """Return the Web management UI home page"""
+        """Return the Web management UI home page."""
         index_file = static_dir / "index.html"
         if index_file.exists():
             return FileResponse(str(index_file))
@@ -167,7 +165,7 @@ else:
     async def root():
         return JSONResponse(
             content={
-                "message": "Voice cloning service is running",
+                "message": "Voice cloning service (GPT-SoVITS) is running",
                 "docs": "/docs",
                 "health": "/api/health",
             }

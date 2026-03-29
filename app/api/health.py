@@ -1,6 +1,7 @@
 """
 Health check API router
-Provides runtime information including service status, GPU info, and model loading state.
+Provides runtime information including service status, GPU info,
+GPT-SoVITS availability, and trained voice count.
 """
 
 import logging
@@ -19,7 +20,7 @@ _service_start_time: float = time.time()
 
 
 def set_start_time(t: float) -> None:
-    """Set the service start time (called by main.py in the startup event)"""
+    """Set the service start time (called by main.py in the startup event)."""
     global _service_start_time
     _service_start_time = t
 
@@ -28,20 +29,21 @@ def set_start_time(t: float) -> None:
     "/health",
     response_model=HealthResponse,
     summary="Service health check",
-    description="Returns service status, GPU info, loaded model state, and the number of available voices",
+    description=(
+        "Returns service status, GPU info, GPT-SoVITS availability, "
+        "and the number of available trained voices."
+    ),
 )
 async def health_check() -> HealthResponse:
     """
     Health check endpoint.
 
     Returns:
-        HealthResponse: Contains service status, GPU info, voice count, etc.
+        HealthResponse: Service status, GPU info, voice count, uptime, etc.
     """
     from app.config import settings
-    from app.core.tts_engine import TTSEngine
-    from app.core.voicepack_manager import VoicePackManager
 
-    # ── GPU information ───────────────────────────────────────────────────────
+    # -- GPU information -------------------------------------------------------
     gpu_info: Optional[GPUInfo] = None
     try:
         import torch
@@ -63,35 +65,33 @@ async def health_check() -> HealthResponse:
     except Exception as e:
         logger.warning(f"Failed to retrieve GPU info: {e}")
 
-    # ── Model loading state ───────────────────────────────────────────────────
-    engine = TTSEngine.get_instance(
-        model_dir=settings.model_dir,
-        storage_dir=settings.storage_dir,
-    )
-    model_loaded = engine.is_model_loaded()
+    # -- GPT-SoVITS readiness -------------------------------------------------
+    from pathlib import Path
+    gptsovits_ready = Path(settings.gptsovits_dir).exists()
 
-    # ── Number of available voices ────────────────────────────────────────────
+    # -- Number of available voices -------------------------------------------
     try:
-        manager = VoicePackManager(storage_dir=settings.storage_dir)
+        from app.core.voice_manager import VoiceManager
+        manager = VoiceManager(storage_dir=settings.storage_dir)
         voice_count = len(manager.list_all())
     except Exception:
         voice_count = 0
 
-    # ── Uptime ────────────────────────────────────────────────────────────────
+    # -- Uptime ---------------------------------------------------------------
     uptime = time.time() - _service_start_time
 
-    # ── Service status determination ──────────────────────────────────────────
-    if model_loaded and (gpu_info is None or gpu_info.cuda_available):
-        status = "ok"
-    elif not model_loaded:
-        status = "degraded"  # Model not loaded; functionality is limited
+    # -- Service status determination -----------------------------------------
+    if gptsovits_ready and (gpu_info is None or gpu_info.cuda_available):
+        svc_status = "ok"
+    elif not gptsovits_ready:
+        svc_status = "degraded"  # GPT-SoVITS not cloned; training/synthesis unavailable
     else:
-        status = "ok"
+        svc_status = "ok"
 
     return HealthResponse(
-        status=status,
-        version="1.0.0",
-        model_loaded=model_loaded,
+        status=svc_status,
+        version="2.0.0",
+        gptsovits_ready=gptsovits_ready,
         gpu_info=gpu_info,
         voice_count=voice_count,
         uptime_seconds=round(uptime, 2),

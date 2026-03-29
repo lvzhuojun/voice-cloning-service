@@ -1,6 +1,6 @@
 """
 Training API router
-Provides endpoints for creating voice cloning training tasks from uploaded files
+Provides endpoints for creating GPT-SoVITS voice fine-tuning tasks from uploaded files
 or local folders. Training tasks execute asynchronously; query progress via task_id.
 """
 
@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,48 +33,8 @@ from app.utils.file_utils import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-
-def _transcribe_audio(audio: "np.ndarray", sample_rate: int, language: str) -> Optional[str]:
-    """
-    Transcribe audio array to text using Whisper.
-    Returns None if transcription fails.
-    """
-    import io
-    import tempfile
-    import numpy as np
-    import soundfile as sf
-
-    try:
-        import whisper
-    except ImportError:
-        logger.warning("openai-whisper not installed; skipping transcription")
-        return None
-
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            sf.write(tmp.name, audio.astype(np.float32), sample_rate, subtype="PCM_16")
-            tmp_path = tmp.name
-
-        model = whisper.load_model("base")
-        lang = "zh" if language == "zh" else "en"
-        result = model.transcribe(tmp_path, language=lang, fp16=False)
-        text = result.get("text", "").strip()
-
-        import os
-        os.unlink(tmp_path)
-
-        return text if text else None
-    except Exception as e:
-        logger.warning(f"Whisper transcription failed: {e}")
-        try:
-            import os
-            os.unlink(tmp_path)
-        except Exception:
-            pass
-        return None
-
-# ── In-memory task status store ───────────────────────────────────────────────
-# In production, replace with Redis or a database; a dict is used here for simplicity
+# -- In-memory task status store -----------------------------------------------
+# In production, replace with Redis or a database
 _task_store: Dict[str, TaskStatus] = {}
 
 
@@ -88,7 +47,7 @@ def _update_task(
     error: Optional[str] = None,
 ) -> None:
     """
-    Update task status (internal helper function).
+    Update task status (internal helper).
 
     Args:
         task_id: Task ID
@@ -108,27 +67,6 @@ def _update_task(
         task.updated_at = datetime.now(timezone.utc)
 
 
-def _select_best_reference(
-    audio_quality_pairs: list,
-    min_duration: float = 5.0,
-    max_duration: float = 15.0,
-) -> tuple:
-    """
-    Select the best reference audio segment from processed audio clips.
-
-    Priority:
-    1. Duration within [min_duration, max_duration] AND highest quality score
-    2. If no segment meets duration criteria, fall back to highest quality score overall
-    """
-    candidates = [
-        (audio, sr, report)
-        for audio, sr, report in audio_quality_pairs
-        if min_duration <= report.duration_seconds <= max_duration
-    ]
-    pool = candidates if candidates else audio_quality_pairs
-    return max(pool, key=lambda x: x[2].quality_score)
-
-
 def _run_training_pipeline(
     task_id: str,
     audio_files: List[str],
@@ -137,96 +75,56 @@ def _run_training_pipeline(
     temp_dir: Optional[str] = None,
 ) -> None:
     """
-    Voice pack creation pipeline (executed as a background task).
+    GPT-SoVITS fine-tuning pipeline (executed as a background task).
 
-    This is a zero-shot pipeline — no model weights are updated.
     Workflow:
-    1. Preprocess uploaded audio (format conversion, quality scoring)
-    2. Select the best reference audio segment (5-15s, highest SNR)
-    3. Transcribe reference audio with Whisper (enables higher-quality synthesis)
-    4. Pack reference audio + transcript into a .voicepack file
+    1. Slice audio into 3-10s segments
+    2. Transcribe with Whisper
+    3. Extract Hubert, semantic, and BERT features
+    4. Fine-tune GPT (s1) model
+    5. Fine-tune SoVITS (s2) model
+    6. Save metadata
 
     Args:
         task_id: Task ID
         audio_files: List of audio file paths
-        voice_name: Voice name
+        voice_name: Voice display name
         language: Language code
-        temp_dir: Temporary directory path (cleaned up after processing)
+        temp_dir: Temporary directory (cleaned up after processing)
     """
-    import torch
+    from app.core.trainer import GPTSoVITSTrainer
+    from app.core.voice_manager import VoiceManager
+
+    voice_id = str(uuid.uuid4())
+
+    def progress_callback(stage: str, pct: int, msg: str) -> None:
+        _update_task(task_id, TaskStatusEnum.PROCESSING, pct, msg)
 
     try:
-        from app.core.audio_processor import AudioProcessor
-        from app.core.voicepack_manager import VoicePackManager
+        _update_task(task_id, TaskStatusEnum.PROCESSING, 5, "Starting training pipeline...")
+        logger.info(f"[{task_id}] Starting GPT-SoVITS training | voice_id: {voice_id}")
 
-        # ── Stage 1: Audio preprocessing ─────────────────────────────────────
-        _update_task(task_id, TaskStatusEnum.PROCESSING, 20, "Preprocessing audio...")
-        logger.info(f"[{task_id}] Starting audio preprocessing, file count: {len(audio_files)}")
-
-        processor = AudioProcessor(
-            min_duration=settings.min_audio_duration_seconds,
-            max_duration=settings.max_audio_duration_seconds,
+        trainer = GPTSoVITSTrainer(
+            gptsovits_dir=settings.gptsovits_dir,
+            pretrained_dir=settings.pretrained_gptsovits_dir,
+            output_dir=settings.models_dir,
         )
 
-        processed_audio, batch_report = processor.process_batch(audio_files)
-
-        if batch_report.success_count == 0:
-            raise RuntimeError(
-                f"All audio files failed processing: {list(batch_report.errors.values())[:3]}"
-            )
-
-        logger.info(
-            f"[{task_id}] Preprocessing complete | "
-            f"Succeeded: {batch_report.success_count}/{batch_report.total_files}"
-        )
-
-        # Build (audio, sr, quality_report) list
-        audio_quality_pairs = [
-            (audio, sr, batch_report.file_reports[fname])
-            for fname, (audio, sr) in processed_audio.items()
-            if fname in batch_report.file_reports
-        ]
-
-        # ── Stage 2: Select optimal reference audio ───────────────────────────
-        _update_task(task_id, TaskStatusEnum.PROCESSING, 50, "Selecting optimal reference audio...")
-
-        best_audio, best_sr, best_report = _select_best_reference(audio_quality_pairs)
-        logger.info(
-            f"[{task_id}] Reference audio selected | "
-            f"Duration: {best_report.duration_seconds:.1f}s | Quality: {best_report.quality_score:.3f}"
-        )
-
-        # ── Stage 3: Transcribe reference audio with Whisper ─────────────────
-        # The transcript is used by inference_zero_shot for better synthesis quality.
-        _update_task(task_id, TaskStatusEnum.PROCESSING, 65, "Transcribing reference audio (Whisper)...")
-        prompt_text = _transcribe_audio(best_audio, best_sr, language)
-        if prompt_text:
-            logger.info(f"[{task_id}] Transcription: {prompt_text[:80]}")
-        else:
-            logger.warning(f"[{task_id}] Transcription failed; synthesis will use cross-lingual mode")
-
-        # ── Stage 4: Pack .voicepack ──────────────────────────────────────────
-        _update_task(task_id, TaskStatusEnum.PROCESSING, 88, "Packing voice pack...")
-
-        # Placeholder embedding (not used in synthesis; CosyVoice3 extracts its own)
-        placeholder_embedding = torch.zeros(192)
-
-        manager = VoicePackManager(storage_dir=settings.storage_dir)
-        voice_id = manager.pack(
-            embedding=placeholder_embedding,
-            reference_audio=best_audio,
-            reference_sample_rate=best_sr,
+        metadata = trainer.train(
+            voice_id=voice_id,
             voice_name=voice_name,
+            audio_files=audio_files,
             language=language,
-            sample_count=batch_report.success_count,
-            total_duration_seconds=batch_report.total_duration_seconds,
-            quality_score=batch_report.average_quality_score,
-            prompt_text=prompt_text,
+            epochs_gpt=settings.training_epochs_gpt,
+            epochs_sovits=settings.training_epochs_sovits,
+            progress_callback=progress_callback,
         )
 
-        logger.info(f"[{task_id}] Voice pack packed successfully | voice_id: {voice_id}")
+        # Save metadata to voice directory
+        manager = VoiceManager(storage_dir=settings.storage_dir)
+        manager.save_metadata(voice_id, metadata)
 
-        # ── Complete ──────────────────────────────────────────────────────────
+        logger.info(f"[{task_id}] Training complete | voice_id: {voice_id}")
         _update_task(
             task_id,
             TaskStatusEnum.DONE,
@@ -235,9 +133,19 @@ def _run_training_pipeline(
             voice_id=voice_id,
         )
 
+    except RuntimeError as e:
+        error_msg = str(e)
+        logger.error(f"[{task_id}] Training failed (RuntimeError): {error_msg}")
+        _update_task(
+            task_id,
+            TaskStatusEnum.FAILED,
+            0,
+            "Training failed",
+            error=error_msg,
+        )
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"[{task_id}] Training failed: {error_msg}")
+        logger.error(f"[{task_id}] Training failed: {error_msg}", exc_info=True)
         _update_task(
             task_id,
             TaskStatusEnum.FAILED,
@@ -246,36 +154,39 @@ def _run_training_pipeline(
             error=error_msg,
         )
     finally:
-        # Clean up temporary files
         if temp_dir:
             cleanup_dir(temp_dir)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ================================================================================
 # API routes
-# ══════════════════════════════════════════════════════════════════════════════
+# ================================================================================
 
 @router.post(
     "/from-upload",
     response_model=TrainResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Create training task from uploaded audio files",
-    description="Upload 1~10 audio files to asynchronously create a voice training task. Returns a task_id for querying progress.",
+    description=(
+        "Upload 1~10 audio files to asynchronously start a GPT-SoVITS fine-tuning task. "
+        "Returns a task_id for querying progress. "
+        "Recommended: 1-3 minutes of clean speech, split across multiple files."
+    ),
 )
 async def train_from_upload(
     background_tasks: BackgroundTasks,
     voice_name: str = Form(..., description="Voice name (1~64 characters)", min_length=1, max_length=64),
     language: Language = Form(default=Language.ZH, description="Primary language"),
-    files: List[UploadFile] = File(..., description="Reference audio files (supports WAV/MP3/M4A/FLAC/OGG)"),
+    files: List[UploadFile] = File(..., description="Reference audio files (WAV/MP3/M4A/FLAC/OGG)"),
 ) -> TrainResponse:
     """
-    Create a training task from uploaded audio files.
+    Create a GPT-SoVITS training task from uploaded audio files.
 
     Args:
         background_tasks: FastAPI background task manager
         voice_name: User-defined voice name
         language: Primary language
-        files: List of uploaded audio files (1~10)
+        files: Uploaded audio files (1~10)
 
     Returns:
         TrainResponse: Response containing task_id
@@ -284,7 +195,6 @@ async def train_from_upload(
         HTTPException 400: Unsupported file format or invalid file count
         HTTPException 413: File too large
     """
-    # Validate file count
     if not files or len(files) == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -296,15 +206,14 @@ async def train_from_upload(
             detail=f"Maximum 10 audio files are supported; {len(files)} were uploaded",
         )
 
-    # Validate file formats
     for f in files:
         if not is_allowed_audio_file(f.filename or ""):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported file format: {f.filename}. Supported formats: WAV/MP3/M4A/FLAC/OGG",
+                detail=f"Unsupported file format: {f.filename}. Supported: WAV/MP3/M4A/FLAC/OGG",
             )
 
-    # Create a temporary directory to save uploaded files
+    # Save to temp dir
     temp_dir = create_temp_dir(prefix=f"upload_{uuid.uuid4().hex[:8]}_")
     saved_paths: List[str] = []
 
@@ -312,7 +221,6 @@ async def train_from_upload(
         for upload_file in files:
             file_content = await upload_file.read()
 
-            # Check file size
             if len(file_content) > settings.max_upload_size_bytes:
                 cleanup_dir(temp_dir)
                 raise HTTPException(
@@ -323,7 +231,6 @@ async def train_from_upload(
                     ),
                 )
 
-            # Save to temporary directory
             safe_name = Path(upload_file.filename or "audio.wav").name
             save_path = os.path.join(temp_dir, safe_name)
             with open(save_path, "wb") as f:
@@ -339,7 +246,7 @@ async def train_from_upload(
             detail=f"File save failed: {e}",
         )
 
-    # Create task record
+    # Create task
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     _task_store[task_id] = TaskStatus(
@@ -351,7 +258,6 @@ async def train_from_upload(
         updated_at=now,
     )
 
-    # Add background task
     background_tasks.add_task(
         _run_training_pipeline,
         task_id=task_id,
@@ -363,7 +269,7 @@ async def train_from_upload(
 
     logger.info(
         f"Training task created | task_id: {task_id} | "
-        f"File count: {len(saved_paths)} | Voice name: {voice_name}"
+        f"Files: {len(saved_paths)} | Voice: {voice_name}"
     )
 
     return TrainResponse(
@@ -378,25 +284,25 @@ async def train_from_upload(
     response_model=TrainResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Create training task from a local folder",
-    description="Specify a subfolder under data/samples/ to create a training task using its audio files.",
+    description="Specify a subfolder under data/samples/ to start a GPT-SoVITS training task.",
 )
 async def train_from_folder(
     background_tasks: BackgroundTasks,
     request: TrainFromFolderRequest,
 ) -> TrainResponse:
     """
-    Create a training task from a local folder.
+    Create a training task from a local audio folder.
 
     Args:
         background_tasks: FastAPI background task manager
-        request: Request body containing folder_name, voice_name, and language
+        request: Request body (folder_name, voice_name, language)
 
     Returns:
         TrainResponse: Response containing task_id
 
     Raises:
         HTTPException 404: Folder does not exist
-        HTTPException 400: Folder is empty or contains no valid audio files
+        HTTPException 400: No valid audio files in folder
     """
     folder_path = os.path.join(settings.samples_dir, request.folder_name)
 
@@ -421,40 +327,38 @@ async def train_from_folder(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"No valid audio files found in folder data/samples/{request.folder_name}. "
+                f"No valid audio files found in data/samples/{request.folder_name}. "
                 "Supported formats: WAV/MP3/M4A/FLAC/OGG"
             ),
         )
 
     if len(audio_files) > 10:
         audio_files = audio_files[:10]
-        logger.info(f"Folder contains more than 10 files; using only the first 10")
+        logger.info("Folder has more than 10 files; using first 10")
 
-    # Create task record
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     _task_store[task_id] = TaskStatus(
         task_id=task_id,
         status=TaskStatusEnum.PENDING,
         progress=0,
-        message=f"Task created, using folder: {request.folder_name} ({len(audio_files)} file(s))",
+        message=f"Task created for folder: {request.folder_name} ({len(audio_files)} file(s))",
         created_at=now,
         updated_at=now,
     )
 
-    # Add background task
     background_tasks.add_task(
         _run_training_pipeline,
         task_id=task_id,
         audio_files=audio_files,
         voice_name=request.voice_name,
         language=request.language.value,
-        temp_dir=None,  # No cleanup needed (using original file paths)
+        temp_dir=None,
     )
 
     logger.info(
-        f"Training task created (folder mode) | task_id: {task_id} | "
-        f"Folder: {request.folder_name} | File count: {len(audio_files)}"
+        f"Training task created (folder) | task_id: {task_id} | "
+        f"Folder: {request.folder_name} | Files: {len(audio_files)}"
     )
 
     return TrainResponse(
