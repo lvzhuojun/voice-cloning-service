@@ -54,25 +54,9 @@ echo  Press Ctrl+C to stop  /  run stop.bat to stop from elsewhere
 echo ============================================================
 echo.
 
-:: Start uvicorn, save PID for stop.bat
-start /B "" "%PYTHON%" -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-:: Give process a moment to register
-timeout /t 1 /nobreak >nul
-for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr "0\.0\.0\.0:8000 "') do (
-    echo %%a > .pid
-    echo  [OK] Service running (PID %%a)
-    goto :wait
-)
-:wait
-echo  Press any key to stop the service...
-pause >nul
+:: Start uvicorn in foreground (closing the window will kill the process)
+"%PYTHON%" -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-:: On exit: kill by .pid
-if exist ".pid" (
-    set /p SVC_PID=<.pid
-    echo  Stopping service (PID !SVC_PID!)...
-    taskkill /F /PID !SVC_PID! >nul 2>&1
-    del ".pid" >nul 2>&1
-)
+echo.
 echo  Service stopped.
 pause
