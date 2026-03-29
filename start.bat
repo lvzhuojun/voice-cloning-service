@@ -43,9 +43,13 @@ if not exist ".env" (
     echo  INFO: .env created from .env.example
 )
 
-:: Start service
+:: Free port 8000 if occupied
 echo.
 echo [3/3] Starting service...
+for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":8000 "') do (
+    echo  INFO: Killing old process on port 8000 (PID %%a)...
+    taskkill /F /PID %%a >nul 2>&1
+)
 echo.
 echo  Web UI : http://localhost:8000
 echo  API Doc: http://localhost:8000/docs
@@ -54,7 +58,7 @@ echo.
 echo ============================================================
 echo.
 
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 echo.
 echo Service stopped.
