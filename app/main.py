@@ -62,12 +62,21 @@ async def lifespan(app: FastAPI):
 
     # Check pretrained models
     pretrained_path = Path(settings.pretrained_gptsovits_dir)
-    if pretrained_path.exists():
-        logger.info(f"GPT-SoVITS pretrained models found: {pretrained_path.absolute()}")
+    required_pretrained = [
+        pretrained_path / "pretrained_s1.ckpt",
+        pretrained_path / "pretrained_s2G.pth",
+        pretrained_path / "pretrained_s2D.pth",
+        pretrained_path / "chinese-hubert-base" / "config.json",
+        pretrained_path / "chinese-roberta-wwm-ext-large" / "config.json",
+    ]
+    missing_pretrained = [str(path) for path in required_pretrained if not path.exists()]
+    if not missing_pretrained:
+        logger.info(f"GPT-SoVITS pretrained models verified: {pretrained_path.absolute()}")
     else:
         logger.warning(
-            f"GPT-SoVITS pretrained models not found: {pretrained_path.absolute()}\n"
-            "Run: python setup/download_models.py"
+            "GPT-SoVITS pretrained models are incomplete:\n"
+            + "\n".join(missing_pretrained)
+            + "\nRun: python setup/download_models.py"
         )
 
     # Log available voices

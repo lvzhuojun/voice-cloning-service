@@ -39,15 +39,15 @@ ROBERTA_REPO        = "hfl/chinese-roberta-wwm-ext-large"
 # (source path inside HF repo  →  local filename in pretrained_dir)
 GPTSOVITS_FILES = [
     (
-        "GPT_SoVITS/pretrained_models/s1bert25hz-2kh-longer-epoch=68e-step=50232.ckpt",
+        "gsv-v2final-pretrained/s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt",
         "pretrained_s1.ckpt",
     ),
     (
-        "GPT_SoVITS/pretrained_models/s2G488k.pth",
+        "gsv-v2final-pretrained/s2G2333k.pth",
         "pretrained_s2G.pth",
     ),
     (
-        "GPT_SoVITS/pretrained_models/s2D488k.pth",
+        "gsv-v2final-pretrained/s2D2333k.pth",
         "pretrained_s2D.pth",
     ),
 ]
