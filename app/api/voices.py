@@ -195,6 +195,7 @@ async def test_voice(voice_id: str, request: TestVoiceRequest) -> Response:
             text=request.text,
             voice_id=voice_id,
             speed=request.speed,
+            language=request.language.value,
         )
         return Response(
             content=wav_bytes,
