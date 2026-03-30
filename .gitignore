@@ -6,6 +6,7 @@ CosyVoice/
 
 # GPT-SoVITS source (cloned separately, not part of this repo)
 GPT-SoVITS/
+GPT_SoVITS/
 
 # Pretrained models (too large for version control)
 storage/pretrained_models/
