@@ -16,7 +16,7 @@
 已重写并对齐当前实现：
 
 - `README.md`
-- `VOICEPACK_FORMAT.md`
+- `MODEL_FORMAT.md`
 - `IMPROVEMENTS.md`
 
 ## 3. Web UI 适配新模型格式

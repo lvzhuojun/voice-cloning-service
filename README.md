@@ -1,280 +1,309 @@
 # Voice Cloning Service
 
-基于 GPT-SoVITS v2 的语音克隆服务。
+**[English](README.md) | [中文](README_zh.md)**
 
-这个项目的目标很明确：
+A RESTful voice cloning backend based on **GPT-SoVITS v2** real fine-tuning.
 
-- 传入一批同一说话人的参考音频
-- 在服务端完成 GPT-SoVITS 微调
-- 导出该声音对应的模型文件
-- 下游系统可以直接拿导出的模型做声音管理、分发和推理集成
+Upload 1–3 minutes of reference audio → fine-tune a personal voice model on the server → export portable dual-file models (`.ckpt` + `.pth`) for downstream systems to manage, distribute, and run inference with.
 
-## 这个项目现在能做什么
+---
 
-当前版本已经完成并验证了下面这条主流程：
+## Features
 
-1. 用户上传音频文件，或者选择 `data/samples/<folder_name>/` 下的本地音频目录
-2. 服务执行 GPT-SoVITS 训练流水线
-3. 训练完成后生成一个新的 `voice_id`
-4. 在 `storage/models/{voice_id}/` 下导出该声音的模型文件
-5. 前端或 API 可以直接对这个 `voice_id` 做试听
-6. 也可以把模型文件下载给其他系统使用
+- **Real fine-tuning** — full GPT-SoVITS v2 training pipeline, not zero-shot cloning
+- **8-step pipeline** — audio slicing → Whisper transcription → BERT/HuBERT feature extraction → GPT (s1) training → SoVITS (s2) training → model export
+- **Portable model output** — each trained voice produces a self-contained directory (`{voice_id}_gpt.ckpt` + `{voice_id}_sovits.pth` + `metadata.json` + `reference.wav`)
+- **Full REST API** — training, synthesis preview, model download, voice management
+- **Web management UI** — built-in HTML UI at `/`
+- **Windows-native** — tested on Windows 11 + RTX GPU + Anaconda
 
-## 训练完成后会得到什么
+---
 
-每次训练成功后，都会得到一个独立的声音目录：
+## Requirements
 
-```text
-storage/models/{voice_id}/
-  {voice_id}_gpt.ckpt
-  {voice_id}_sovits.pth
-  metadata.json
-  reference.wav
+| Component | Requirement |
+|-----------|-------------|
+| OS | Windows 10 / 11 |
+| Conda | Miniconda or Anaconda |
+| Python | 3.10 (managed via conda) |
+| GPU | NVIDIA GPU with CUDA support |
+| VRAM | ≥ 6 GB recommended |
+| Disk | ~10 GB free (pretrained models + training workspace) |
+
+> **GPU note:** The default `setup/install.bat` installs PyTorch 2.7 + CUDA 12.8 (for RTX 40/50 series). Edit the install script to change the CUDA version if needed.
+
+---
+
+## Installation
+
+### Step 1 — Clone this repository
+
+```bash
+git clone https://github.com/lvzhuojun/voice-cloning-service.git
+cd voice-cloning-service
 ```
 
-例如：
+### Step 2 — Clone GPT-SoVITS
 
-```text
-storage/models/1511e200-f24d-4346-8af9-29d253d0dde5/
-  1511e200-f24d-4346-8af9-29d253d0dde5_gpt.ckpt
-  1511e200-f24d-4346-8af9-29d253d0dde5_sovits.pth
-  metadata.json
-  reference.wav
+```bat
+setup\clone_gptsovits.bat
 ```
 
-这些文件的含义：
+This clones the [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) source into the `GPT-SoVITS/` directory (excluded from version control).
 
-- `{voice_id}_gpt.ckpt`
-  GPT 文本到语义模型权重
-- `{voice_id}_sovits.pth`
-  SoVITS 语音生成模型权重
-- `metadata.json`
-  记录声音名称、语言、训练参数、文件名等信息
-- `reference.wav`
-  当前服务内部试听时使用的参考音频
+### Step 3 — Install dependencies
 
-## 声音模型格式是什么
-
-当前项目的标准输出格式不是旧 `.voicepack`，而是 GPT-SoVITS 双文件格式：
-
-- `.ckpt`
-- `.pth`
-
-也就是：
-
-```text
-{voice_id}_gpt.ckpt + {voice_id}_sovits.pth
+```bat
+setup\install.bat
 ```
 
-这是当前服务最核心的导出结果。
+This will:
+1. Create the `voice-cloning` conda environment (Python 3.10)
+2. Install PyTorch 2.7 + CUDA 12.8
+3. Install all pip dependencies from `requirements-pip.txt`
+4. Run an environment verification check
 
-详细说明见 [VOICEPACK_FORMAT.md](VOICEPACK_FORMAT.md)。
+### Step 4 — Download pretrained models
 
-## 这些模型存在哪里
-
-模型统一保存在：
-
-```text
-storage/models/{voice_id}/
+```bat
+conda run -n voice-cloning python setup/download_models.py
 ```
 
-预训练基础模型保存在：
+Downloads to `storage/pretrained_models/GPT-SoVITS/` (~3–4 GB total):
 
-```text
-storage/pretrained_models/GPT-SoVITS/
-```
+| File | Description |
+|------|-------------|
+| `pretrained_s1.ckpt` | Base GPT (AR) model |
+| `pretrained_s2G.pth` | Base SoVITS generator |
+| `pretrained_s2D.pth` | Base SoVITS discriminator |
+| `chinese-hubert-base/` | Audio feature extractor |
+| `chinese-roberta-wwm-ext-large/` | BERT text encoder |
 
-其中预训练目录包含：
+> **China mirror:** The downloader uses `https://hf-mirror.com` by default. Set `HF_ENDPOINT` in `.env` to override.
 
-```text
-pretrained_s1.ckpt
-pretrained_s2G.pth
-pretrained_s2D.pth
-chinese-hubert-base/
-chinese-roberta-wwm-ext-large/
-```
+---
 
-## 下游系统可以怎么用这些模型
+## Quick Start
 
-当前项目已经支持把训练好的声音模型直接导出给下游系统。
-
-下游系统可用方式包括：
-
-- 直接下载 `.ckpt` 和 `.pth`
-- 下载整包 ZIP
-- 读取 `metadata.json` 获取声音信息
-
-下载接口：
-
-```http
-GET /api/voices/{voice_id}/download/gpt
-GET /api/voices/{voice_id}/download/sovits
-GET /api/voices/{voice_id}/download/all
-```
-
-其中：
-
-- `/download/gpt` 下载 GPT 模型
-- `/download/sovits` 下载 SoVITS 模型
-- `/download/all` 下载整包 ZIP
-
-ZIP 内包含：
-
-```text
-{voice_id}_gpt.ckpt
-{voice_id}_sovits.pth
-metadata.json
-reference.wav
-```
-
-## 是否可以给其他语音助手直接使用
-
-可以，但要分两层理解。
-
-第一层，模型导出和分发：
-
-- 可以
-- 当前项目已经能稳定导出 GPT-SoVITS 双文件模型
-- 下游语音助手可以保存、管理、分发这些模型文件
-
-第二层，直接用于下游推理：
-
-- 取决于下游系统是否兼容 GPT-SoVITS 推理链路
-- 如果下游也使用 GPT-SoVITS 官方推理方式，那么它可以直接加载这两个模型文件
-- 如果下游是其他 TTS 框架，就需要它自己做适配
-
-当前服务端自己的试听实现，已经改为使用 GPT-SoVITS 官方：
-
-- `TTS_infer_pack.TTS.TTS`
-
-也就是说，本项目内部已经证明：
-
-- 训练出的模型可以被再次加载
-- 加载后可以生成试听音频
-
-## 目前试听的工作方式
-
-当前试听接口：
-
-```http
-POST /api/voices/{voice_id}/test
-```
-
-请求体示例：
-
-```json
-{
-  "text": "你好，这是训练完成后的试听测试。",
-  "speed": 1.0,
-  "language": "zh"
-}
-```
-
-注意：
-
-- 当前服务端试听时仍会使用 `reference.wav`
-- 这是当前服务内部的推理实现选择
-- 不影响模型文件本身的导出和下游管理
-
-## 已验证状态
-
-当前仓库已经验证通过的内容：
-
-- GPT-SoVITS 训练链路可完成
-- 模型文件可导出到 `storage/models/{voice_id}/`
-- 中文试听可返回音频
-- 主仓库文档、代码、远程仓库已同步
-
-当前最稳妥的使用建议：
-
-- 训练和试听优先使用中文
-- 若测试英文试听，需要额外依赖 `wordsegment`、`g2p_en` 和 NLTK 数据
-
-## 快速使用步骤
-
-### 1. 启动服务
+### 1. Start the service
 
 ```bat
 start.bat
 ```
 
-启动后访问：
+| URL | Description |
+|-----|-------------|
+| `http://localhost:8000` | Web management UI |
+| `http://localhost:8000/docs` | Swagger API docs |
+| `http://localhost:8000/api/health` | Health check |
 
-- Web UI: `http://localhost:8000`
-- Swagger: `http://localhost:8000/docs`
+### 2. Submit a training job
 
-### 2. 发起训练
-
-方式一：本地目录训练
+**From a local folder** (place audio files in `data/samples/<folder_name>/`):
 
 ```http
 POST /api/train/from-folder
-```
+Content-Type: application/json
 
-请求体示例：
-
-```json
 {
-  "folder_name": "1wav",
-  "voice_name": "test_voice",
+  "folder_name": "my_speaker",
+  "voice_name": "My Voice",
   "language": "zh"
 }
 ```
 
-方式二：上传文件训练
+**From uploaded files:**
 
 ```http
 POST /api/train/from-upload
+Content-Type: multipart/form-data
+
+voice_name=My Voice
+language=zh
+files=<audio files>
 ```
 
-### 3. 查询训练状态
+Supported formats: `WAV / MP3 / M4A / FLAC / OGG`, up to 10 files, max 200 MB each.
+
+### 3. Poll training status
 
 ```http
 GET /api/train/{task_id}/status
 ```
 
-训练成功后会返回 `voice_id`。
+Response includes `progress` (0–100) and `voice_id` when `status` is `done`.
 
-### 4. 对已训练模型试听
+### 4. Synthesize a test preview
 
 ```http
 POST /api/voices/{voice_id}/test
+Content-Type: application/json
+
+{
+  "text": "Hello, this is a voice cloning test.",
+  "speed": 1.0,
+  "language": "zh"
+}
 ```
 
-### 5. 下载模型
+Returns a WAV audio stream.
+
+### 5. Download model files
 
 ```http
-GET /api/voices/{voice_id}/download/gpt
-GET /api/voices/{voice_id}/download/sovits
-GET /api/voices/{voice_id}/download/all
+GET /api/voices/{voice_id}/download/gpt      # GPT checkpoint (.ckpt)
+GET /api/voices/{voice_id}/download/sovits   # SoVITS weights (.pth)
+GET /api/voices/{voice_id}/download/all      # ZIP archive (all files)
 ```
 
-## 项目目录
+---
 
-```text
-app/
-  api/
-  core/
+## Output Format
 
-GPT-SoVITS/
-  GPT_SoVITS/
+Each successful training run produces an isolated voice directory:
 
-setup/
-  clone_gptsovits.bat
-  clone_gptsovits.sh
-  download_models.py
-
-storage/
-  models/
-  pretrained_models/
-  uploads/
-
-data/
-  samples/
+```
+storage/models/{voice_id}/
+├── {voice_id}_gpt.ckpt      # GPT text-to-semantic model weights
+├── {voice_id}_sovits.pth    # SoVITS vocoder generator weights
+├── metadata.json            # Voice metadata (name, language, training params)
+└── reference.wav            # Reference audio used for synthesis
 ```
 
-## 相关文档
+**`metadata.json` example:**
 
-- [VOICEPACK_FORMAT.md](VOICEPACK_FORMAT.md)
-- [IMPROVEMENTS.md](IMPROVEMENTS.md)
-- [data/samples/README.md](data/samples/README.md)
+```json
+{
+  "voice_id": "1511e200-f24d-4346-8af9-29d253d0dde5",
+  "voice_name": "My Voice",
+  "language": "zh",
+  "created_at": "2026-03-30T15:24:37+00:00",
+  "training_epochs_gpt": 15,
+  "training_epochs_sovits": 8,
+  "gpt_model_file": "1511e200-f24d-4346-8af9-29d253d0dde5_gpt.ckpt",
+  "sovits_model_file": "1511e200-f24d-4346-8af9-29d253d0dde5_sovits.pth",
+  "base_model_version": "GPT-SoVITS v2"
+}
+```
+
+### Using exported models in downstream systems
+
+Any system that runs GPT-SoVITS inference can load these files directly:
+
+```python
+from TTS_infer_pack.TTS import TTS, TTS_Config
+
+voice_id = "1511e200-f24d-4346-8af9-29d253d0dde5"
+config = TTS_Config({
+    "custom": {
+        "device": "cuda",
+        "is_half": True,
+        "version": "v2",
+        "t2s_weights_path": f"storage/models/{voice_id}/{voice_id}_gpt.ckpt",
+        "vits_weights_path": f"storage/models/{voice_id}/{voice_id}_sovits.pth",
+        "cnhuhbert_base_path": "storage/pretrained_models/GPT-SoVITS/chinese-hubert-base",
+        "bert_base_path": "storage/pretrained_models/GPT-SoVITS/chinese-roberta-wwm-ext-large",
+    }
+})
+tts = TTS(config)
+```
+
+---
+
+## API Reference
+
+### Health
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/health` | Service status, GPU info, voice count, uptime |
+
+### Training
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/train/from-upload` | Submit training job from uploaded files |
+| POST | `/api/train/from-folder` | Submit training job from local folder |
+| GET | `/api/train/{task_id}/status` | Poll training progress |
+
+### Voice Management
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/voices/` | List all trained voices |
+| GET | `/api/voices/{voice_id}` | Get voice details |
+| DELETE | `/api/voices/{voice_id}` | Delete voice and all files |
+| POST | `/api/voices/{voice_id}/test` | Synthesize test speech (WAV) |
+| GET | `/api/voices/{voice_id}/download/gpt` | Download GPT checkpoint |
+| GET | `/api/voices/{voice_id}/download/sovits` | Download SoVITS weights |
+| GET | `/api/voices/{voice_id}/download/all` | Download ZIP archive |
+
+Full interactive docs available at `/docs` (Swagger) and `/redoc`.
+
+---
+
+## Configuration
+
+Copy `.env.example` to `.env` and edit as needed:
+
+```env
+HOST=0.0.0.0
+PORT=8000
+
+# HuggingFace mirror (recommended for China)
+HF_ENDPOINT=https://hf-mirror.com
+
+# Training parameters
+TRAINING_EPOCHS_GPT=15
+TRAINING_EPOCHS_SOVITS=8
+WHISPER_MODEL=medium
+
+# Upload limits
+MAX_UPLOAD_SIZE_MB=200
+```
+
+---
+
+## Project Structure
+
+```
+voice-cloning-service/
+├── app/
+│   ├── api/            # FastAPI route handlers (health, train, voices)
+│   ├── core/           # Business logic (trainer, tts_engine, voice_manager)
+│   ├── models/         # Pydantic schemas
+│   └── utils/          # Logging, file utilities
+├── setup/
+│   ├── install.bat     # One-click install (Windows)
+│   ├── clone_gptsovits.bat / .sh
+│   ├── download_models.py
+│   └── check_env.py
+├── static/             # Web management UI
+├── data/samples/       # Local training audio (gitignored)
+├── storage/            # Runtime data (gitignored)
+│   ├── models/         # Trained voice models
+│   ├── pretrained_models/
+│   └── uploads/
+├── tests/
+├── GPT-SoVITS/         # GPT-SoVITS source (cloned separately, gitignored)
+├── start.bat
+├── stop.bat
+└── .env.example
+```
+
+---
+
+## Notes
+
+- **Chinese is the recommended language.** Training and synthesis for Chinese (`zh`) are fully tested.
+- **English synthesis** requires additional packages (`wordsegment`, `g2p_en`, NLTK data). These are listed in `requirements-pip.txt` but may need manual verification on first run.
+- **Training task state** is stored in memory. Restarting the service clears all task history (voice models on disk are unaffected).
+- **Reference audio** (`reference.wav`) is kept alongside the model files and is required for the built-in synthesis endpoint.
+
+---
+
+## License
+
+This project is released under the [MIT License](LICENSE).
+
+GPT-SoVITS is a separate project with its own license — see `GPT-SoVITS/LICENSE`.

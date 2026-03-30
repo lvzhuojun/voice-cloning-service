@@ -101,11 +101,6 @@ class Settings(BaseSettings):
         return os.path.join(self.storage_dir, "uploads")
 
     @property
-    def voicepacks_dir(self) -> str:
-        """Storage directory for legacy voice packs (backward compat)"""
-        return os.path.join(self.storage_dir, "voicepacks")
-
-    @property
     def samples_dir(self) -> str:
         """Local sample audio directory"""
         return os.path.join("data", "samples")
