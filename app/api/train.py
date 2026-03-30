@@ -135,7 +135,7 @@ def _run_training_pipeline(
 
     except RuntimeError as e:
         error_msg = str(e)
-        logger.error(f"[{task_id}] Training failed (RuntimeError): {error_msg}")
+        logger.error(f"[{task_id}] Training failed (RuntimeError):\n{error_msg}")
         _update_task(
             task_id,
             TaskStatusEnum.FAILED,
@@ -145,7 +145,7 @@ def _run_training_pipeline(
         )
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"[{task_id}] Training failed: {error_msg}", exc_info=True)
+        logger.error(f"[{task_id}] Training failed:\n{error_msg}", exc_info=True)
         _update_task(
             task_id,
             TaskStatusEnum.FAILED,

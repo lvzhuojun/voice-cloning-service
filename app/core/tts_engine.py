@@ -9,9 +9,12 @@ created lazily and reused until evicted.
 from __future__ import annotations
 
 import gc
+import importlib
 import logging
+import os
 import sys
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -83,10 +86,37 @@ class TTSEngine:
         return "cuda" if torch.cuda.is_available() else "cpu"
 
     def _add_gptsovits_to_path(self) -> None:
-        for path in (self.gptsovits_dir, self.gptsovits_inner):
+        extra_paths = (
+            self.gptsovits_dir,
+            self.gptsovits_inner,
+            self.gptsovits_inner / "eres2net",
+        )
+        for path in extra_paths:
             path_str = str(path)
             if path_str not in sys.path:
                 sys.path.insert(0, path_str)
+
+    @contextmanager
+    def _gptsovits_runtime_env(self):
+        original_cwd = Path.cwd()
+        original_env = {
+            "bert_path": os.environ.get("bert_path"),
+            "cnhubert_base_path": os.environ.get("cnhubert_base_path"),
+            "cnhuhbert_base_path": os.environ.get("cnhuhbert_base_path"),
+        }
+        os.chdir(self.gptsovits_dir)
+        os.environ["bert_path"] = str(self.pretrained_dir / "chinese-roberta-wwm-ext-large")
+        os.environ["cnhubert_base_path"] = str(self.pretrained_dir / "chinese-hubert-base")
+        os.environ["cnhuhbert_base_path"] = str(self.pretrained_dir / "chinese-hubert-base")
+        try:
+            yield
+        finally:
+            os.chdir(original_cwd)
+            for key, value in original_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
     def _check_runtime_ready(self) -> None:
         if not self.gptsovits_dir.exists():
@@ -107,6 +137,33 @@ class TTSEngine:
                 "Required pretrained models are missing:\n"
                 + "\n".join(missing)
                 + "\nRun: conda run -n voice-cloning python setup/download_models.py"
+            )
+
+        # fast-langdetect expects its cache directory to exist before first use.
+        (self.gptsovits_inner / "pretrained_models" / "fast_langdetect").mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        required_modules = {
+            "wordsegment": "pip install wordsegment",
+            "fast_langdetect": "pip install fast-langdetect",
+            "split_lang": "pip install split-lang",
+            "ffmpeg": "pip install ffmpeg-python",
+            "librosa": "pip install librosa",
+            "soundfile": "pip install soundfile",
+            "peft": "pip install 'peft>=0.13.0,<0.18.0'",
+        }
+        missing_modules = []
+        for module_name, install_hint in required_modules.items():
+            try:
+                importlib.import_module(module_name)
+            except Exception:
+                missing_modules.append(f"{module_name} ({install_hint})")
+        if missing_modules:
+            raise RuntimeError(
+                "Missing GPT-SoVITS TTS runtime dependencies:\n"
+                + "\n".join(missing_modules)
             )
 
     def _get_voice_paths(self, voice_id: str) -> dict:
@@ -146,27 +203,28 @@ class TTSEngine:
         device = self._resolve_device()
         is_half = device.startswith("cuda")
 
-        try:
-            from TTS_infer_pack.TTS import TTS, TTS_Config
-        except Exception as exc:
-            raise RuntimeError(f"Failed to import GPT-SoVITS TTS runtime: {exc}") from exc
+        with self._gptsovits_runtime_env():
+            try:
+                from TTS_infer_pack.TTS import TTS, TTS_Config
+            except Exception as exc:
+                raise RuntimeError(f"Failed to import GPT-SoVITS TTS runtime: {exc}") from exc
 
-        config = TTS_Config(
-            {
-                "custom": {
-                    "device": device,
-                    "is_half": is_half,
-                    "version": "v2",
-                    "t2s_weights_path": str(paths["gpt"]),
-                    "vits_weights_path": str(paths["sovits"]),
-                    "cnhuhbert_base_path": str(self.pretrained_dir / "chinese-hubert-base"),
-                    "bert_base_path": str(self.pretrained_dir / "chinese-roberta-wwm-ext-large"),
+            config = TTS_Config(
+                {
+                    "custom": {
+                        "device": device,
+                        "is_half": is_half,
+                        "version": "v2",
+                        "t2s_weights_path": str(paths["gpt"]),
+                        "vits_weights_path": str(paths["sovits"]),
+                        "cnhuhbert_base_path": str(self.pretrained_dir / "chinese-hubert-base"),
+                        "bert_base_path": str(self.pretrained_dir / "chinese-roberta-wwm-ext-large"),
+                    }
                 }
-            }
-        )
+            )
 
-        logger.info("Loading GPT-SoVITS TTS instance for voice %s on %s", voice_id, device)
-        tts = TTS(config)
+            logger.info("Loading GPT-SoVITS TTS instance for voice %s on %s", voice_id, device)
+            tts = TTS(config)
         return {
             "tts": tts,
             "device": device,
@@ -223,7 +281,8 @@ class TTSEngine:
 
         with self._inference_lock:
             try:
-                result = next(voice_cache["tts"].run(inputs))
+                with self._gptsovits_runtime_env():
+                    result = next(voice_cache["tts"].run(inputs))
             except StopIteration as exc:
                 raise RuntimeError(f"TTS returned no audio for voice {voice_id}") from exc
             except Exception as exc:

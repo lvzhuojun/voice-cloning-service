@@ -184,9 +184,23 @@ class GPTSoVITSTrainer:
         cb: Optional[Callable],
         stage_name: str,
     ) -> None:
-        env = {**os.environ, **extra_env}
+        python_paths = [str(self.gptsovits_dir), str(self.gptsovits_inner)]
+        existing_pythonpath = os.environ.get("PYTHONPATH", "")
+        if existing_pythonpath:
+            python_paths.append(existing_pythonpath)
+        env = {
+            **os.environ,
+            **extra_env,
+            "PYTHONPATH": os.pathsep.join(python_paths),
+            "PYTHONIOENCODING": "utf-8",
+            "bert_path": extra_env.get(
+                "bert_pretrained_dir",
+                str(self.pretrained_dir / "chinese-roberta-wwm-ext-large"),
+            ),
+        }
         script_abs = str(self.gptsovits_dir / script_rel)
         cmd = [self.python, script_abs]
+        output_lines: List[str] = []
 
         logger.info(f"Running {stage_name} ...")
         proc = subprocess.Popen(
@@ -202,10 +216,74 @@ class GPTSoVITSTrainer:
         for line in proc.stdout:
             line = line.rstrip()
             if line:
+                output_lines.append(line)
+                if len(output_lines) > 80:
+                    output_lines.pop(0)
                 logger.debug(f"[{stage_name}] {line}")
         proc.wait()
         if proc.returncode != 0:
-            raise RuntimeError(f"{stage_name} failed (exit code {proc.returncode})")
+            tail = "\n".join(output_lines[-20:])
+            raise RuntimeError(
+                f"{stage_name} failed (exit code {proc.returncode})"
+                + (f"\nLast output:\n{tail}" if tail else "")
+            )
+
+    def _run_long_script(
+        self,
+        cmd: List[str],
+        cwd: Path,
+        env: dict,
+        stage_name: str,
+        log_file: Path,
+    ) -> List[str]:
+        output_lines: List[str] = []
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        python_paths = [str(self.gptsovits_dir), str(self.gptsovits_inner)]
+        existing_pythonpath = env.get("PYTHONPATH") or os.environ.get("PYTHONPATH", "")
+        if existing_pythonpath:
+            python_paths.append(existing_pythonpath)
+        run_env = {
+            **os.environ,
+            **env,
+            "PYTHONPATH": os.pathsep.join(python_paths),
+            "PYTHONIOENCODING": "utf-8",
+            "bert_path": env.get(
+                "bert_pretrained_dir",
+                str(self.pretrained_dir / "chinese-roberta-wwm-ext-large"),
+            ),
+        }
+
+        logger.info("Running %s ...", stage_name)
+        with open(log_file, "w", encoding="utf-8", errors="replace") as fh:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(cwd),
+                env=run_env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            for line in proc.stdout:
+                line = line.rstrip()
+                if line:
+                    fh.write(line + "\n")
+                    output_lines.append(line)
+                    if len(output_lines) > 120:
+                        output_lines.pop(0)
+                    logger.debug("[%s] %s", stage_name, line)
+            proc.wait()
+
+        if proc.returncode != 0:
+            tail = "\n".join(output_lines[-40:])
+            raise RuntimeError(
+                f"{stage_name} failed (exit code {proc.returncode})"
+                + (f"\nLog file: {log_file}" if log_file else "")
+                + (f"\nLast output:\n{tail}" if tail else "")
+            )
+
+        return output_lines
 
     # ── Step 3: BERT features (1-get-text.py) ───────────────────────────────
 
@@ -291,15 +369,21 @@ class GPTSoVITSTrainer:
         logs_dir = opt_dir / "logs_s1_v2"
         logs_dir.mkdir(parents=True, exist_ok=True)
         voice_dir.mkdir(parents=True, exist_ok=True)
+        ckpt_dir = logs_dir / "ckpt"
+        if ckpt_dir.exists():
+            shutil.rmtree(ckpt_dir, ignore_errors=True)
+        s1_weights_dir = logs_dir / "weights"
+        s1_weights_dir.mkdir(parents=True, exist_ok=True)
 
         cfg["pretrained_s1"] = str(self.pretrained_dir / "pretrained_s1.ckpt")
+        cfg["data"]["num_workers"] = 0
         cfg["train"]["batch_size"] = 4
         cfg["train"]["epochs"] = epochs
         cfg["train"]["save_every_n_epoch"] = max(1, epochs // 5)
         cfg["train"]["if_save_latest"] = True
         cfg["train"]["if_save_every_weights"] = True
         cfg["train"]["if_dpo"] = False
-        cfg["train"]["half_weights_save_dir"] = str(voice_dir)
+        cfg["train"]["half_weights_save_dir"] = str(s1_weights_dir)
         cfg["train"]["exp_name"] = exp_name
         cfg["train"]["precision"] = "16-mixed"
         cfg["train_semantic_path"] = str(opt_dir / "6-name2semantic.tsv")
@@ -314,30 +398,19 @@ class GPTSoVITSTrainer:
         cmd = [self.python, str(self.gptsovits_dir / "GPT_SoVITS" / "s1_train.py"),
                "--config_file", str(tmp_cfg)]
 
-        logger.info("Training GPT model (s1)...")
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(self.gptsovits_dir),
+        self._run_long_script(
+            cmd=cmd,
+            cwd=self.gptsovits_dir,
             env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            stage_name="s1_train.py",
+            log_file=opt_dir / "s1_train.log",
         )
-        for line in proc.stdout:
-            line = line.rstrip()
-            if line:
-                logger.debug(f"[s1_train] {line}")
-        proc.wait()
-        if proc.returncode != 0:
-            raise RuntimeError(f"s1_train.py failed (exit code {proc.returncode})")
 
         # Find the latest .ckpt saved to voice_dir
-        ckpts = sorted(voice_dir.glob(f"{exp_name}-e*.ckpt"),
+        ckpts = sorted(s1_weights_dir.glob(f"{exp_name}-e*.ckpt"),
                        key=lambda p: p.stat().st_mtime, reverse=True)
         if not ckpts:
-            raise RuntimeError(f"No GPT checkpoint found in {voice_dir} after training.")
+            raise RuntimeError(f"No GPT checkpoint found in {s1_weights_dir} after training.")
         return ckpts[0]
 
     # ── Step 7: Train SoVITS / s2 ────────────────────────────────────────────
@@ -358,6 +431,8 @@ class GPTSoVITSTrainer:
         logs_s2 = opt_dir / "logs_s2_v2"
         logs_s2.mkdir(parents=True, exist_ok=True)
         voice_dir.mkdir(parents=True, exist_ok=True)
+        s2_weights_dir = logs_s2 / "weights"
+        s2_weights_dir.mkdir(parents=True, exist_ok=True)
 
         cfg["train"]["batch_size"] = 8
         cfg["train"]["epochs"] = epochs
@@ -374,7 +449,7 @@ class GPTSoVITSTrainer:
         cfg["data"]["exp_dir"] = str(opt_dir)
         cfg["model"]["version"] = "v2"
         cfg["s2_ckpt_dir"] = str(logs_s2)
-        cfg["save_weight_dir"] = str(voice_dir)
+        cfg["save_weight_dir"] = str(s2_weights_dir)
         cfg["name"] = exp_name
         cfg["version"] = "v2"
 
@@ -386,30 +461,19 @@ class GPTSoVITSTrainer:
         cmd = [self.python, str(self.gptsovits_dir / "GPT_SoVITS" / "s2_train.py"),
                "--config", str(tmp_cfg)]
 
-        logger.info("Training SoVITS model (s2)...")
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(self.gptsovits_dir),
+        self._run_long_script(
+            cmd=cmd,
+            cwd=self.gptsovits_dir,
             env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            stage_name="s2_train.py",
+            log_file=opt_dir / "s2_train.log",
         )
-        for line in proc.stdout:
-            line = line.rstrip()
-            if line:
-                logger.debug(f"[s2_train] {line}")
-        proc.wait()
-        if proc.returncode != 0:
-            raise RuntimeError(f"s2_train.py failed (exit code {proc.returncode})")
 
         # Find the latest .pth saved to voice_dir
-        pths = sorted(voice_dir.glob(f"{exp_name}_e*.pth"),
+        pths = sorted(s2_weights_dir.glob(f"{exp_name}_e*.pth"),
                       key=lambda p: p.stat().st_mtime, reverse=True)
         if not pths:
-            raise RuntimeError(f"No SoVITS checkpoint found in {voice_dir} after training.")
+            raise RuntimeError(f"No SoVITS checkpoint found in {s2_weights_dir} after training.")
         return pths[0]
 
     # ── Public entry point ────────────────────────────────────────────────────
