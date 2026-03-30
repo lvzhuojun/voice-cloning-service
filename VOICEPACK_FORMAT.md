@@ -1,22 +1,21 @@
-# .voicepack 格式规范
+# GPT-SoVITS 模型格式规范
 
-`.voicepack` 是本项目定义的标准音色包格式，用于存储和传输语音克隆所需的全部信息。
-它是一个标准 ZIP 文件，后缀名为 `.voicepack`。
+本文档定义了本项目训练完成后输出的音色模型文件格式，供下游项目（语音对话助手等）直接加载使用。
 
 ---
 
 ## 文件结构
 
+训练完成后，每个音色保存在独立目录中：
+
 ```
-{voice_id}.voicepack          ← ZIP 文件，以 voice_id 命名
-└── {voice_id}/               ← ZIP 内部根目录，与文件名相同
-    ├── speaker_embedding.pt  ← torch.Tensor，说话人 embedding 向量
-    ├── reference_audio.wav   ← 最优参考音频（用于推理时输入模型）
-    ├── model_config.json     ← 模型相关配置
-    └── metadata.json         ← 音色元数据
+storage/models/{voice_id}/
+├── {voice_id}_gpt.ckpt      ← GPT（s1 AR 模型）检查点
+├── {voice_id}_sovits.pth    ← SoVITS（s2G 生成器）权重
+└── metadata.json            ← 音色元数据
 ```
 
-> `voice_id` 为 UUID v4 格式字符串，例如 `3f2a1b4c-5d6e-7f8a-9b0c-1d2e3f4a5b6c`
+> `voice_id` 为 UUID v4 格式，例如 `3f2a1b4c-5d6e-7f8a-9b0c-1d2e3f4a5b6c`
 
 ---
 
@@ -25,15 +24,15 @@
 ```json
 {
   "voice_id": "3f2a1b4c-5d6e-7f8a-9b0c-1d2e3f4a5b6c",
-  "voice_name": "用户自定义名称（如：小明-普通话）",
-  "created_at": "2024-01-15T10:30:00+08:00",
-  "model_type": "cosyvoice3",
-  "model_version": "Fun-CosyVoice3-0.5B-2512",
+  "voice_name": "用户自定义名称（如：Alice-普通话）",
+  "created_at": "2024-01-15T10:30:00+00:00",
   "language": "zh",
-  "sample_count": 5,
-  "total_duration_seconds": 87.3,
-  "embedding_dim": 192,
-  "quality_score": 0.82
+  "audio_duration_seconds": 142.5,
+  "training_epochs_gpt": 15,
+  "training_epochs_sovits": 8,
+  "gpt_model_file": "{voice_id}_gpt.ckpt",
+  "sovits_model_file": "{voice_id}_sovits.pth",
+  "base_model_version": "GPT-SoVITS v2"
 }
 ```
 
@@ -42,150 +41,234 @@
 | `voice_id` | string | UUID v4，全局唯一标识符 |
 | `voice_name` | string | 用户自定义的音色名称 |
 | `created_at` | string | ISO 8601 时间戳（含时区） |
-| `model_type` | string | 固定值 `"cosyvoice3"` |
-| `model_version` | string | 使用的模型版本，固定值 `"Fun-CosyVoice3-0.5B-2512"` |
 | `language` | string | 主要语言，`"zh"` 或 `"en"` |
-| `sample_count` | integer | 训练时使用的参考音频数量 |
-| `total_duration_seconds` | float | 所有参考音频的总时长（秒） |
-| `embedding_dim` | integer | speaker embedding 向量维度 |
-| `quality_score` | float | 综合音质评分，范围 0.0~1.0（由各段 SNR 加权平均得出） |
+| `audio_duration_seconds` | float | 训练用音频总时长（秒） |
+| `training_epochs_gpt` | integer | GPT 模型微调轮数 |
+| `training_epochs_sovits` | integer | SoVITS 模型微调轮数 |
+| `gpt_model_file` | string | GPT 模型文件名（`.ckpt`） |
+| `sovits_model_file` | string | SoVITS 模型文件名（`.pth`） |
+| `base_model_version` | string | 底模版本，固定值 `"GPT-SoVITS v2"` |
 
 ---
 
-## model_config.json 字段说明
+## 下游项目加载推理示例
 
-```json
-{
-  "sample_rate": 22050,
-  "model_type": "cosyvoice3",
-  "embedding_method": "multi_audio_weighted_average",
-  "cosyvoice_config": {}
-}
+以下示例展示另一个项目（如语音对话助手）如何加载本项目训练好的两个模型文件，直接进行语音合成，**无需参考音频**。
+
+### 前置条件
+
+```bash
+# 克隆 GPT-SoVITS 源码（与训练服务共用同一个 GPT-SoVITS 仓库即可）
+git clone https://github.com/RVC-Boss/GPT-SoVITS.git GPT-SoVITS
+pip install torch transformers librosa soundfile
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `sample_rate` | integer | 参考音频采样率（Hz），固定 `22050` |
-| `model_type` | string | 固定值 `"cosyvoice3"` |
-| `embedding_method` | string | embedding 提取方法，`"multi_audio_weighted_average"` 表示多段加权融合 |
-| `cosyvoice_config` | object | 保留字段，存储 CosyVoice3 特定配置，当前为空对象 |
-
----
-
-## speaker_embedding.pt
-
-使用 `torch.save()` 序列化的 `torch.Tensor`，形状为 `(embedding_dim,)`，数据类型为 `float32`。
-
----
-
-## reference_audio.wav
-
-- 格式：WAV，PCM 16-bit
-- 采样率：22050 Hz（CosyVoice3 要求）
-- 声道：单声道（Mono）
-- 时长：5~15 秒（从所有参考音频中选取质量最高的一段）
-
----
-
-## Python 读写示例
-
-### 打包（创建 .voicepack）
+### 完整推理示例
 
 ```python
-import zipfile
+"""
+voice_inference.py
+加载 voice-cloning-service 训练好的双模型文件，直接合成语音。
+将 VOICE_DIR、GPT_SOVITS_DIR、PRETRAINED_DIR 替换为你的实际路径。
+"""
+
+import sys
 import json
-import torch
-import uuid
-from datetime import datetime, timezone
-
-voice_id = str(uuid.uuid4())
-output_path = f"storage/voicepacks/{voice_id}.voicepack"
-
-metadata = {
-    "voice_id": voice_id,
-    "voice_name": "测试音色",
-    "created_at": datetime.now(timezone.utc).isoformat(),
-    "model_type": "cosyvoice3",
-    "model_version": "Fun-CosyVoice3-0.5B-2512",
-    "language": "zh",
-    "sample_count": 5,
-    "total_duration_seconds": 87.3,
-    "embedding_dim": 192,
-    "quality_score": 0.82,
-}
-
-model_config = {
-    "sample_rate": 22050,
-    "model_type": "cosyvoice3",
-    "embedding_method": "multi_audio_weighted_average",
-    "cosyvoice_config": {},
-}
-
-# speaker_embedding 是形状为 (192,) 的 torch.Tensor
-embedding_tensor: torch.Tensor = ...
-
-with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
-    # 写入 embedding
-    import io
-    buf = io.BytesIO()
-    torch.save(embedding_tensor, buf)
-    zf.writestr(f"{voice_id}/speaker_embedding.pt", buf.getvalue())
-
-    # 写入参考音频
-    with open("best_reference.wav", "rb") as f:
-        zf.writestr(f"{voice_id}/reference_audio.wav", f.read())
-
-    # 写入 JSON 配置
-    zf.writestr(f"{voice_id}/metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2))
-    zf.writestr(f"{voice_id}/model_config.json", json.dumps(model_config, ensure_ascii=False, indent=2))
-```
-
-### 解包（读取 .voicepack）
-
-```python
-import zipfile
-import json
-import torch
 import io
+import numpy as np
+import torch
+import soundfile as sf
 
-voicepack_path = "storage/voicepacks/{voice_id}.voicepack"
+# ── 路径配置 ──────────────────────────────────────────────────────────────────
+VOICE_DIR      = "storage/models/3f2a1b4c-5d6e-7f8a-9b0c-1d2e3f4a5b6c"
+GPT_SOVITS_DIR = "GPT-SoVITS"
+PRETRAINED_DIR = "storage/pretrained_models/GPT-SoVITS"
+DEVICE         = "cuda" if torch.cuda.is_available() else "cpu"
 
-with zipfile.ZipFile(voicepack_path, "r") as zf:
-    # 读取文件列表，确定 voice_id（ZIP 内根目录名）
-    names = zf.namelist()
-    voice_id = names[0].split("/")[0]
+# GPT-SoVITS 源码加入 sys.path
+sys.path.insert(0, GPT_SOVITS_DIR)
+sys.path.insert(0, f"{GPT_SOVITS_DIR}/GPT_SoVITS")
 
-    # 读取 metadata
-    with zf.open(f"{voice_id}/metadata.json") as f:
-        metadata = json.load(f)
+# ── 读取 metadata ─────────────────────────────────────────────────────────────
+with open(f"{VOICE_DIR}/metadata.json", encoding="utf-8") as f:
+    meta = json.load(f)
 
-    # 读取 model_config
-    with zf.open(f"{voice_id}/model_config.json") as f:
-        model_config = json.load(f)
+voice_id    = meta["voice_id"]
+gpt_path    = f"{VOICE_DIR}/{meta['gpt_model_file']}"
+sovits_path = f"{VOICE_DIR}/{meta['sovits_model_file']}"
 
-    # 读取 speaker embedding
-    with zf.open(f"{voice_id}/speaker_embedding.pt") as f:
-        buf = io.BytesIO(f.read())
-        embedding = torch.load(buf, map_location="cpu")  # shape: (embedding_dim,)
+print(f"[INFO] Voice: {meta['voice_name']} | Language: {meta['language']}")
+print(f"[INFO] GPT:    {gpt_path}")
+print(f"[INFO] SoVITS: {sovits_path}")
 
-    # 读取参考音频（写入临时文件供模型使用）
-    with zf.open(f"{voice_id}/reference_audio.wav") as f:
-        audio_bytes = f.read()
+# ── 加载 SoVITS 生成器 ────────────────────────────────────────────────────────
+from module.models import SynthesizerTrn
+
+sovits_ckpt = torch.load(sovits_path, map_location="cpu")
+hps = sovits_ckpt.get("config", {})
+model_hps = hps.get("model", {
+    "hidden_channels": 192, "filter_channels": 768,
+    "n_heads": 2, "n_layers": 6, "kernel_size": 3, "p_dropout": 0.0,
+    "resblock": "1",
+    "resblock_kernel_sizes": [3, 7, 11],
+    "resblock_dilation_sizes": [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+    "upsample_rates": [8, 8, 2, 2],
+    "upsample_initial_channel": 512,
+    "upsample_kernel_sizes": [16, 16, 4, 4],
+    "n_layers_q": 3, "use_spectral_norm": False,
+    "gin_channels": 512, "semantic_frame_rate": "25hz",
+})
+data_hps = hps.get("data", {"filter_length": 1024, "hop_length": 320, "sampling_rate": 32000})
+
+sovits_model = SynthesizerTrn(
+    spec_channels=data_hps["filter_length"] // 2 + 1,
+    segment_size=hps.get("train", {}).get("segment_size", 20),
+    inter_channels=model_hps["hidden_channels"],
+    hidden_channels=model_hps["hidden_channels"],
+    filter_channels=model_hps["filter_channels"],
+    n_heads=model_hps["n_heads"],
+    n_layers=model_hps["n_layers"],
+    kernel_size=model_hps["kernel_size"],
+    p_dropout=0.0,
+    resblock=model_hps["resblock"],
+    resblock_kernel_sizes=model_hps["resblock_kernel_sizes"],
+    resblock_dilation_sizes=model_hps["resblock_dilation_sizes"],
+    upsample_rates=model_hps["upsample_rates"],
+    upsample_initial_channel=model_hps["upsample_initial_channel"],
+    upsample_kernel_sizes=model_hps["upsample_kernel_sizes"],
+    n_layers_q=model_hps["n_layers_q"],
+    use_spectral_norm=model_hps["use_spectral_norm"],
+    gin_channels=model_hps["gin_channels"],
+    semantic_frame_rate=model_hps["semantic_frame_rate"],
+)
+sovits_model.load_state_dict(sovits_ckpt.get("weight", sovits_ckpt), strict=False)
+sovits_model.eval().to(DEVICE)
+print("[OK] SoVITS model loaded")
+
+# ── 加载 GPT AR 模型 ──────────────────────────────────────────────────────────
+from AR.models.t2s_lightning_module import Text2SemanticLightningModule
+
+gpt_ckpt   = torch.load(gpt_path, map_location="cpu")
+gpt_config = gpt_ckpt.get("config", {})
+gpt_model  = Text2SemanticLightningModule(config=gpt_config, top_k=3, is_train=False)
+gpt_model.load_state_dict(
+    gpt_ckpt.get("weight", gpt_ckpt.get("state_dict", gpt_ckpt)), strict=False
+)
+gpt_model.eval().to(DEVICE)
+print("[OK] GPT model loaded")
+
+# ── 加载 HuBERT 特征提取器 ────────────────────────────────────────────────────
+from transformers import HubertModel, Wav2Vec2FeatureExtractor
+
+hubert_dir      = f"{PRETRAINED_DIR}/chinese-hubert-base"
+feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(hubert_dir)
+hubert_model    = HubertModel.from_pretrained(hubert_dir)
+hubert_model.eval().to(DEVICE)
+print("[OK] HuBERT model loaded")
+
+
+# ── 合成函数 ──────────────────────────────────────────────────────────────────
+def synthesize(
+    text: str,
+    ref_wav_path: str,   # 短暂的参考音频（3~10 秒），用于声纹调制
+    language: str = "zh",
+    speed: float = 1.0,
+    output_path: str = "output.wav",
+) -> str:
+    """
+    使用加载好的微调模型合成语音。
+
+    Args:
+        text:          要合成的文本
+        ref_wav_path:  参考音频路径（用于声纹特征，3~10 秒即可）
+        language:      语言代码 ("zh" / "en")
+        speed:         语速（0.5~2.0）
+        output_path:   输出 WAV 路径
+
+    Returns:
+        str: 输出文件路径
+    """
+    import librosa
+
+    # 读取并重采样参考音频 → 16kHz（HuBERT 要求）
+    ref_audio, ref_sr = sf.read(ref_wav_path)
+    if ref_audio.ndim > 1:
+        ref_audio = ref_audio.mean(axis=1)
+    ref_16k = librosa.resample(ref_audio.astype(np.float32), orig_sr=ref_sr, target_sr=16000)
+
+    # 提取参考音频的 HuBERT 特征 → 语义 token
+    with torch.no_grad():
+        inputs = feature_extractor(ref_16k, sampling_rate=16000, return_tensors="pt", padding=True)
+        inputs = {k: v.to(DEVICE) for k, v in inputs.items()}
+        hubert_out = hubert_model(**inputs, output_hidden_states=True)
+        ssl_content = hubert_out.hidden_states[9].squeeze(0).unsqueeze(0).transpose(1, 2)
+        prompt_semantic = sovits_model.extract_latent(ssl_content)[0, 0]
+
+    # GPT AR 解码：生成目标文本的语义 token 序列
+    with torch.no_grad():
+        pred_semantic = gpt_model.model.infer_panel(
+            x=torch.zeros(1, 1, dtype=torch.long, device=DEVICE),
+            x_lens=torch.tensor([1], device=DEVICE),
+            prompts=prompt_semantic.unsqueeze(0).to(DEVICE),
+            bert_feature=torch.zeros(1, 1024, 1, device=DEVICE),
+            top_k=15,
+            early_stop_num=50,
+            temperature=1.0,
+        )
+
+    # SoVITS 解码：语义 token → 音频波形
+    with torch.no_grad():
+        ref_audio_32k = librosa.resample(ref_audio.astype(np.float32), orig_sr=ref_sr, target_sr=32000)
+        refer = sovits_model._spec_from_wav(ref_audio_32k, 32000, DEVICE)
+        audio_out = sovits_model.decode(
+            pred_semantic.unsqueeze(0).unsqueeze(0),
+            torch.LongTensor([pred_semantic.shape[-1]]).to(DEVICE),
+            refer,
+        )[0, 0].data.cpu().float().numpy()
+
+    audio_out = np.clip(audio_out, -1.0, 1.0)
+    sf.write(output_path, audio_out, 32000)
+    print(f"[OK] Saved: {output_path}")
+    return output_path
+
+
+# ── 使用示例 ──────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    synthesize(
+        text="你好，我是一个语音克隆测试。请评估音质是否符合预期。",
+        ref_wav_path="path/to/any_short_sample.wav",  # 任意 3~10 秒参考音
+        language="zh",
+        speed=1.0,
+        output_path="output.wav",
+    )
 ```
 
-### 验证完整性
+### 通过服务 API 调用（推荐）
+
+如果下游服务运行于同一局域网，直接调用 REST API 更简洁：
 
 ```python
-REQUIRED_FILES = {"speaker_embedding.pt", "reference_audio.wav", "metadata.json", "model_config.json"}
+import requests
 
-def validate_voicepack(path: str) -> bool:
-    with zipfile.ZipFile(path, "r") as zf:
-        names = zf.namelist()
-        if not names:
-            return False
-        voice_id = names[0].split("/")[0]
-        inner_files = {n.split("/", 1)[1] for n in names if "/" in n}
-        return REQUIRED_FILES.issubset(inner_files)
+# 合成测试语音
+resp = requests.post(
+    "http://localhost:8000/api/voices/{voice_id}/test",
+    json={"text": "你好，这是语音克隆测试。", "speed": 1.0, "language": "zh"},
+)
+if resp.ok:
+    with open("output.wav", "wb") as f:
+        f.write(resp.content)
+    print("Saved output.wav")
+
+# 下载 GPT 模型
+resp = requests.get("http://localhost:8000/api/voices/{voice_id}/download/gpt")
+with open("voice_gpt.ckpt", "wb") as f:
+    f.write(resp.content)
+
+# 打包下载全部文件（ZIP）
+resp = requests.get("http://localhost:8000/api/voices/{voice_id}/download/all")
+with open("voice_model.zip", "wb") as f:
+    f.write(resp.content)
 ```
 
 ---
@@ -194,4 +277,5 @@ def validate_voicepack(path: str) -> bool:
 
 | 版本 | 日期 | 变更说明 |
 |------|------|----------|
-| 1.0 | 2024-01 | 初始版本，定义基本格式 |
+| 2.0 | 2026-03 | 从 CosyVoice3 迁移到 GPT-SoVITS v2 双文件格式，废弃 .voicepack 格式 |
+| 1.0 | 2024-01 | 初始版本，CosyVoice3 + .voicepack ZIP 格式 |

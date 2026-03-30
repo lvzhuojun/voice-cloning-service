@@ -1,30 +1,32 @@
 # Voice Cloning Service
 
-基于 **CosyVoice3**（Fun-CosyVoice3-0.5B-2512）的语音音色克隆训练服务。
-通过上传 3~10 段参考音频，即可提取说话人音色特征并打包为可复用的 `.voicepack` 文件，供下游 TTS 服务调用。
+基于 **GPT-SoVITS v2** 的语音音色克隆训练服务。
+上传 1~3 分钟参考音频，自动完成切片、转录、特征提取和模型微调，
+训练完成后导出独立的 GPT + SoVITS 双模型文件，供下游语音对话服务直接加载使用，**无需参考音频**。
 
 ---
 
-## 与原始 CosyVoice 的区别
+## 与 CosyVoice3 方案的核心区别
 
-| 特性 | 原始 CosyVoice | 本项目 |
-|------|--------------|--------|
-| 音色提取方式 | 单段参考音频 | **多段音频加权融合**（按信噪比加权） |
-| 音色复用格式 | 无标准格式 | **标准化 `.voicepack` ZIP 格式** |
-| 服务化 | 仅推理脚本 | **完整 REST API（FastAPI）** |
-| 音频预处理 | 基础处理 | **自动质量检测 + 降噪 + 最优片段选取** |
-| 管理界面 | 无 | **Web 管理界面（纯 HTML/JS）** |
-| 国内适配 | 无 | **HuggingFace 镜像源支持** |
+| 对比项 | CosyVoice3（旧方案）| GPT-SoVITS（当前方案）|
+|--------|--------------------|-----------------------|
+| 推理依赖 | 每次推理都需提供参考音频 | 模型文件独立，推理零参考 |
+| 可移植性 | 无法导出独立音色模型 | 导出 `.ckpt` + `.pth`，跨服务加载 |
+| 音色学习方式 | Zero-shot embedding | **真实微调（Fine-tuning）** |
+| 训练时长 | 无需训练 | 约 5~15 分钟（GPU）|
+| 适用场景 | 快速体验 | **生产级部署、专属音色** |
 
-详细改进说明见 [IMPROVEMENTS.md](IMPROVEMENTS.md)。
+详细迁移说明见 [IMPROVEMENTS.md](IMPROVEMENTS.md)。
 
 ---
 
 ## 技术栈
 
-- **底座模型**：CosyVoice3 (Fun-CosyVoice3-0.5B-2512)
+- **核心引擎**：GPT-SoVITS v2（AR + VITS 双模型架构）
+- **语音识别**：OpenAI Whisper（训练时自动转录）
+- **特征提取**：chinese-hubert-base（音频）+ chinese-roberta-wwm-ext-large（文本）
 - **后端框架**：FastAPI + Uvicorn
-- **音频处理**：librosa、soundfile、ffmpeg
+- **音频处理**：pydub、librosa、soundfile、ffmpeg
 - **运行环境**：Python 3.10，conda 管理
 - **GPU 支持**：NVIDIA RTX 5060（Blackwell / sm_120），需 PyTorch >= 2.7
 
@@ -41,18 +43,77 @@ GET /api/health          # 服务状态、GPU 信息、已有音色数量
 
 ### 训练相关
 ```
-POST /api/train/from-upload    # 上传音频文件，创建训练任务
-POST /api/train/from-folder    # 指定服务器文件夹，创建训练任务
-GET  /api/train/{task_id}/status   # 查询任务进度
+POST /api/train/from-upload         # 上传音频文件，创建训练任务
+POST /api/train/from-folder         # 指定 data/samples/ 子文件夹，创建训练任务
+GET  /api/train/{task_id}/status    # 查询训练进度（含当前阶段描述）
 ```
 
 ### 音色管理
 ```
-GET    /api/voices                        # 列出所有音色
-GET    /api/voices/{voice_id}             # 获取音色详情
-GET    /api/voices/{voice_id}/download    # 下载 .voicepack 文件
-DELETE /api/voices/{voice_id}             # 删除音色
-POST   /api/voices/{voice_id}/test        # 合成测试语音
+GET    /api/voices                          # 列出所有已训练音色
+GET    /api/voices/{voice_id}               # 获取音色详情
+GET    /api/voices/{voice_id}/download/gpt      # 下载 GPT 模型 (.ckpt)
+GET    /api/voices/{voice_id}/download/sovits   # 下载 SoVITS 模型 (.pth)
+GET    /api/voices/{voice_id}/download/all      # 打包下载（含两个模型 + metadata.json）
+DELETE /api/voices/{voice_id}               # 删除音色
+POST   /api/voices/{voice_id}/test          # 合成测试语音
+```
+
+---
+
+## 训练流程
+
+上传音频后，后台自动完成以下步骤（可通过 `GET /api/train/{task_id}/status` 实时追踪进度）：
+
+```
+1. 音频切片     （3~10 秒/段，静音点分割）
+2. Whisper 转录 （自动生成文本标注）
+3. Hubert 特征提取  （CUDA 加速）
+4. 语义 Token 提取  （s2G 量化器）
+5. BERT 特征提取    （chinese-roberta-wwm-ext-large）
+6. GPT 模型微调     （s1 AR 模型，约 3~8 分钟）
+7. SoVITS 模型微调  （s2 VITS 模型，约 2~5 分钟）
+8. 保存模型文件 + metadata.json
+```
+
+训练完成后，模型保存在：
+```
+storage/models/{voice_id}/
+├── {voice_id}_gpt.ckpt
+├── {voice_id}_sovits.pth
+└── metadata.json
+```
+
+---
+
+## 目录结构
+
+```
+voice-cloning-service/
+├── app/
+│   ├── api/          # FastAPI 路由（health, train, voices）
+│   ├── core/         # 核心逻辑（trainer, tts_engine, voice_manager）
+│   ├── models/       # Pydantic schema 定义
+│   └── utils/        # 工具函数
+├── data/
+│   └── samples/      # 本地训练音频文件夹（按说话人子文件夹组织）
+├── GPT-SoVITS/       # GPT-SoVITS 源码（单独克隆，不入版本库）
+├── setup/
+│   ├── install.bat           # 一键安装脚本
+│   ├── clone_gptsovits.bat   # 克隆 GPT-SoVITS（Windows）
+│   ├── clone_gptsovits.sh    # 克隆 GPT-SoVITS（Linux/Mac）
+│   ├── download_models.py    # 下载预训练底模
+│   └── check_env.py          # 环境检测脚本
+├── static/
+│   └── index.html    # Web 管理界面
+├── storage/
+│   ├── models/       # 训练好的音色模型（不入版本库）
+│   ├── pretrained_models/    # 预训练底模（不入版本库）
+│   └── uploads/      # 临时上传文件（不入版本库）
+├── .env.example      # 环境变量配置示例
+├── environment.yml   # conda 环境定义
+├── requirements-pip.txt  # pip 依赖列表
+└── start.bat         # 启动脚本
 ```
 
 ---
@@ -65,21 +126,20 @@ POST   /api/voices/{voice_id}/test        # 合成测试语音
 data/samples/
 ├── speaker_alice/
 │   ├── sample_01.wav
-│   ├── sample_02.wav
-│   └── sample_03.wav
+│   └── sample_02.mp3
 └── speaker_bob/
-    ├── clip1.mp3
-    └── clip2.wav
+    └── recording.m4a
 ```
 
-详细说明见 [data/samples/README.md](data/samples/README.md)。
+- 支持格式：WAV / MP3 / M4A / FLAC / OGG
+- 建议总时长：1~3 分钟
+- 音频要求：安静环境，语速正常，单说话人
 
 ---
 
-## .voicepack 格式
+## 模型文件格式
 
-本项目定义了标准的音色包格式 `.voicepack`，供下游项目对接。
-详细规范见 [VOICEPACK_FORMAT.md](VOICEPACK_FORMAT.md)。
+训练完成后输出两个独立模型文件，详细规范见 [VOICEPACK_FORMAT.md](VOICEPACK_FORMAT.md)。
 
 ---
 
@@ -89,85 +149,81 @@ data/samples/
 
 - Windows 11
 - NVIDIA GPU（推荐 RTX 5060 或更高，需 CUDA 支持）
-- [Anaconda](https://www.anaconda.com/) 或 [Miniconda](https://docs.conda.io/en/latest/miniconda.html)
-- Git（支持 SSH）
+- [Anaconda](https://www.anaconda.com/) 或 Miniconda
+- Git（支持 SSH 推送；Git for Windows 包含 Git Bash）
 
-> **RTX 5060 用户注意**：该显卡为 Blackwell 架构（compute capability sm_120），需要 PyTorch >= 2.7。安装脚本已自动处理此兼容性问题。
+> **RTX 5060 用户注意**：该显卡为 Blackwell 架构（compute capability sm_120），需要 PyTorch >= 2.7。`setup/install.bat` 已自动安装正确版本。
 
-### 步骤 1：克隆仓库
+### 步骤 1：克隆本仓库
 
 ```bash
 git clone git@github.com:lvzhuojun/voice-cloning-service.git
 cd voice-cloning-service
 ```
 
-> 如果使用了 CosyVoice 子模块，还需执行：
-> ```bash
-> git submodule update --init --recursive
-> ```
+### 步骤 2：安装 conda 环境及依赖
 
-### 步骤 2：安装环境
-
-双击运行 `setup/install.bat`，或在命令行执行：
-
-```batch
-setup\install.bat
-```
-
-脚本将自动：
+双击运行 `setup\install.bat`，脚本自动完成：
 - 创建 `voice-cloning` conda 环境（Python 3.10）
-- 安装所有依赖（含 PyTorch >= 2.7 with CUDA）
-- 运行环境检测脚本
+- 安装 PyTorch 2.7 + CUDA 12.8
+- 安装所有 pip 依赖（含 Whisper、transformers 等）
 
-### 步骤 3：下载预训练模型
+### 步骤 3：克隆 GPT-SoVITS 源码
 
-```batch
-conda activate voice-cloning
-python setup/download_models.py
+双击运行 `setup\clone_gptsovits.bat`，将 GPT-SoVITS 克隆到 `./GPT-SoVITS/`。
+
+### 步骤 4：下载预训练底模
+
+```bat
+conda run -n voice-cloning python setup/download_models.py
 ```
 
-国内用户默认使用 `https://hf-mirror.com` 镜像，约需下载 2GB 模型文件。
+将从 HuggingFace 下载约 3~4 GB 文件：
+- `pretrained_s1.ckpt`（GPT base 模型）
+- `pretrained_s2G.pth` + `pretrained_s2D.pth`（SoVITS base 模型）
+- `chinese-hubert-base/`（音频特征提取器）
+- `chinese-roberta-wwm-ext-large/`（文本 BERT 编码器）
 
-### 步骤 4：配置环境变量
+### 步骤 5：配置环境变量
 
-```batch
+```bat
 copy .env.example .env
 ```
 
-根据实际情况修改 `.env`（通常默认值即可）。
+根据实际情况修改 `.env`（默认值通常无需改动）。
 
-### 步骤 5：启动服务
+### 步骤 6：启动服务
 
-```batch
+```bat
 start.bat
 ```
 
-### 步骤 6：使用服务
+### 步骤 7：使用服务
 
 - **Web 管理界面**：打开浏览器访问 `http://localhost:8000`
 - **API 文档**：访问 `http://localhost:8000/docs`
-
-### 步骤 7：训练音色（本地文件夹方式）
-
-1. 在 `data/samples/` 下创建子文件夹，放入 3~10 段 WAV/MP3 音频
-2. 在 Web 界面"本地文件夹训练"区填入子文件夹名，点击"开始训练"
-3. 等待训练完成，音色包保存在 `storage/voicepacks/`
 
 ---
 
 ## 常见问题
 
 **Q：RTX 5060 无法识别 CUDA？**
-A：确保 PyTorch >= 2.7，运行 `python setup/check_env.py` 查看详细检测结果。
+A：确保使用 `setup/install.bat` 安装了 PyTorch 2.7 + cu128。运行 `python setup/check_env.py` 查看详细检测结果。
+
+**Q：Whisper 转录速度很慢？**
+A：默认使用 `medium` 模型。在 `.env` 中将 `WHISPER_MODEL=small` 可加速，但转录精度会降低。大型 GPU 可设置 `large`。
+
+**Q：训练报 "GPT-SoVITS directory not found"？**
+A：先运行 `setup\clone_gptsovits.bat` 克隆 GPT-SoVITS 源码。
+
+**Q：训练报 "chinese-hubert-base not found"？**
+A：先运行 `python setup/download_models.py` 下载预训练底模。
 
 **Q：模型下载失败？**
-A：检查 `.env` 中 `HF_ENDPOINT` 是否设置为可用镜像，或尝试科学上网后设置 `HF_ENDPOINT=https://huggingface.co`。
-
-**Q：音质评分很低？**
-A：确保录音环境安静，单段音频 5~30 秒，建议使用 16kHz 或更高采样率。
+A：检查网络连接，或在 `.env` 中设置 `HF_ENDPOINT=https://hf-mirror.com` 使用国内镜像。
 
 ---
 
 ## License
 
-本项目基于 CosyVoice 开源协议，详见 [LICENSE](LICENSE)。
+本项目后端框架基于 MIT 协议。GPT-SoVITS 遵循其原始 MIT 许可证，详见 `GPT-SoVITS/LICENSE`。
