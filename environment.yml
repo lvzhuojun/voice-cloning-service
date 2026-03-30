@@ -8,3 +8,9 @@ dependencies:
   - python=3.10
   - pip>=23.0
   - ffmpeg>=6.0
+
+# NOTE: PyTorch and all pip packages are installed by setup/install.bat
+# PyTorch 2.7 + CUDA 12.8 (required for RTX 5060 / Blackwell sm_120):
+#   pip install torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+# All other packages:
+#   pip install -r requirements-pip.txt

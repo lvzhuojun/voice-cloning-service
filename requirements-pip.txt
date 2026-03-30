@@ -7,6 +7,7 @@ soundfile>=0.12.0
 numpy>=1.24.0
 scipy>=1.10.0
 ffmpeg-python>=0.2.0
+pydub>=0.25.0
 
 # Web framework
 fastapi>=0.110.0
@@ -19,15 +20,22 @@ pydantic>=2.6.0
 pydantic-settings>=2.2.0
 python-dotenv>=1.0.0
 
-# HuggingFace
+# HuggingFace / Transformers
 huggingface_hub>=0.22.0
 transformers>=4.40.0
 accelerate>=0.29.0
 
-# CosyVoice3 runtime
-omegaconf>=2.3.0
-einops>=0.7.0
-diffusers>=0.27.0
+# Whisper (speech transcription for training pipeline)
+openai-whisper>=20231117
+
+# GPT-SoVITS Chinese text processing
+jieba>=0.42.1
+pypinyin>=0.50.0
+cn2an>=0.5.22
+langid>=1.1.6
+
+# Pitch / prosody analysis
+praat-parselmouth>=0.4.3
 
 # Utils
 tqdm>=4.66.0
