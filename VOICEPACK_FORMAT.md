@@ -1,8 +1,10 @@
-# GPT-SoVITS Model Format
+# GPT-SoVITS Model Output Format
 
-当前项目不再使用旧的 `.voicepack` ZIP 作为核心模型格式。
+本项目当前的标准输出是 GPT-SoVITS 双文件模型格式，而不是旧 `.voicepack`。
 
-当前标准输出为 GPT-SoVITS 双文件格式：
+## 导出结果
+
+每个训练成功的声音都会生成一个独立目录：
 
 ```text
 storage/models/{voice_id}/
@@ -12,29 +14,41 @@ storage/models/{voice_id}/
   reference.wav
 ```
 
-## Files
+## 文件说明
 
-### `{voice_id}_gpt.ckpt`
+### 1. `{voice_id}_gpt.ckpt`
 
-GPT 文本到语义模型权重。
+GPT 文本到语义模型。
 
-用途：
+作用：
 
-- 文本特征到语义 token 预测
-- 推理时由 GPT-SoVITS `TTS_infer_pack.TTS.TTS` 加载
+- 负责把文本特征转换成语义 token
+- 属于 GPT-SoVITS 推理链的一部分
 
-### `{voice_id}_sovits.pth`
+### 2. `{voice_id}_sovits.pth`
 
-SoVITS 模型权重。
+SoVITS 语音生成模型。
 
-用途：
+作用：
 
-- 语义 token 到音频波形生成
-- 推理时由 GPT-SoVITS `TTS_infer_pack.TTS.TTS` 加载
+- 负责把语义 token 转成最终音频
+- 属于 GPT-SoVITS 推理链的一部分
 
-### `metadata.json`
+### 3. `metadata.json`
 
-声音元数据。
+声音元数据文件。
+
+典型内容包括：
+
+- `voice_id`
+- `voice_name`
+- `language`
+- `created_at`
+- `training_epochs_gpt`
+- `training_epochs_sovits`
+- `gpt_model_file`
+- `sovits_model_file`
+- `base_model_version`
 
 示例：
 
@@ -43,8 +57,7 @@ SoVITS 模型权重。
   "voice_id": "1511e200-f24d-4346-8af9-29d253d0dde5",
   "voice_name": "test_voice",
   "language": "zh",
-  "created_at": "2026-03-30T15:24:37.000000+00:00",
-  "audio_duration_seconds": 0.0,
+  "created_at": "2026-03-30T15:24:37+00:00",
   "training_epochs_gpt": 15,
   "training_epochs_sovits": 8,
   "gpt_model_file": "1511e200-f24d-4346-8af9-29d253d0dde5_gpt.ckpt",
@@ -53,25 +66,75 @@ SoVITS 模型权重。
 }
 ```
 
-### `reference.wav`
+### 4. `reference.wav`
 
-训练流程保留的一段参考音频。
+训练过程中保留下来的一段参考音频。
 
-注意：
+当前用途：
 
-- 当前服务端试听接口仍会把它作为 `ref_audio_path`
-- 这不影响双文件模型导出
-- 如果下游系统要做到“完全不依赖任何参考音频”，需要它自己的推理方案也支持这种工作方式
+- 服务端试听时作为 `ref_audio_path`
 
-## Inference Example
+说明：
 
-当前项目内部已经改为使用 GPT-SoVITS 官方 `TTS_infer_pack.TTS.TTS`。
+- 这不影响模型双文件本身的导出
+- 下游是否需要参考音频，取决于它自己的推理实现
 
-最小示例：
+## 模型存储位置
+
+模型统一存放在：
+
+```text
+storage/models/{voice_id}/
+```
+
+例如：
+
+```text
+storage/models/1511e200-f24d-4346-8af9-29d253d0dde5/
+```
+
+## 下载方式
+
+服务提供以下模型下载接口：
+
+```http
+GET /api/voices/{voice_id}/download/gpt
+GET /api/voices/{voice_id}/download/sovits
+GET /api/voices/{voice_id}/download/all
+```
+
+对应含义：
+
+- `/download/gpt`
+  下载 `{voice_id}_gpt.ckpt`
+- `/download/sovits`
+  下载 `{voice_id}_sovits.pth`
+- `/download/all`
+  下载完整 ZIP 包
+
+ZIP 包中包含：
+
+```text
+{voice_id}_gpt.ckpt
+{voice_id}_sovits.pth
+metadata.json
+reference.wav
+```
+
+## 下游系统如何使用
+
+下游系统若兼容 GPT-SoVITS 推理链，可以直接使用这套模型文件：
+
+- 加载 `{voice_id}_gpt.ckpt`
+- 加载 `{voice_id}_sovits.pth`
+- 使用 GPT-SoVITS 的 `TTS_infer_pack.TTS.TTS` 或兼容实现进行推理
+
+本项目内部当前就是这样做的。
+
+推理配置示例：
 
 ```python
 from pathlib import Path
-
 from TTS_infer_pack.TTS import TTS, TTS_Config
 
 voice_id = "1511e200-f24d-4346-8af9-29d253d0dde5"
@@ -93,50 +156,25 @@ config = TTS_Config(
 )
 
 tts = TTS(config)
-
-inputs = {
-    "text": "你好，这是一次试听测试。",
-    "text_lang": "zh",
-    "ref_audio_path": str(voice_dir / "reference.wav"),
-    "prompt_text": "",
-    "prompt_lang": "zh",
-    "speed_factor": 1.0,
-    "top_k": 15,
-    "top_p": 1.0,
-    "temperature": 1.0,
-    "batch_size": 1,
-}
-
-sample_rate, audio = next(tts.run(inputs))
 ```
 
-## API Downloads
+## 这个项目交付给下游的核心价值
 
-服务提供三个下载接口：
+对下游系统来说，这个项目交付的核心不是“一个参考音频文件”，而是：
 
-```http
-GET /api/voices/{voice_id}/download/gpt
-GET /api/voices/{voice_id}/download/sovits
-GET /api/voices/{voice_id}/download/all
-```
+- 一个稳定的 `voice_id`
+- 一套可管理、可下载、可归档的声音模型文件
+- 一套和该声音绑定的元数据
 
-其中 `/download/all` 会返回一个 ZIP，包含：
+换句话说，下游拿到的是“声音模型资产”，而不是一次性生成结果。
 
-```text
-{voice_id}_gpt.ckpt
-{voice_id}_sovits.pth
-metadata.json
-reference.wav
-```
+## 当前结论
 
-## Compatibility Notes
+当前项目已经能够：
 
-- 当前标准版本：GPT-SoVITS v2
-- 当前训练导出目标：`.ckpt + .pth`
-- 已废弃：旧 CosyVoice `.voicepack` 主格式
+- 从音频训练出 GPT-SoVITS 模型
+- 把模型保存到 `storage/models/{voice_id}/`
+- 通过 API 下载这些模型
+- 通过当前服务对模型做试听验证
 
-如果你在新环境部署：
-
-1. 先安装 `requirements-pip.txt`
-2. 运行 `python setup/download_models.py`
-3. 确保 `GPT-SoVITS` 子目录已 clone
+如果下游语音助手需要接入，这些导出的文件就是它的集成入口。
