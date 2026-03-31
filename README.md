@@ -295,6 +295,7 @@ voice-cloning-service/
 
 ## Notes
 
+- **Privacy / copyright:** this repository intentionally does **not** track user training audio, trained voice models, pretrained weights, or the separately cloned `GPT-SoVITS/` source tree. Keep those files under `data/`, `storage/`, and `GPT-SoVITS/` only.
 - **Chinese is the recommended language.** Training and synthesis for Chinese (`zh`) are fully tested.
 - **English synthesis** requires additional packages (`wordsegment`, `g2p_en`, NLTK data). These are listed in `requirements-pip.txt` but may need manual verification on first run.
 - **Training task state** is stored in memory. Restarting the service clears all task history (voice models on disk are unaffected).

@@ -93,6 +93,8 @@ storage/models/{voice_id}/
 storage/models/1511e200-f24d-4346-8af9-29d253d0dde5/
 ```
 
+`storage/models/` 属于运行时输出目录，默认已加入 `.gitignore`，不要把训练出的声音模型提交到仓库。
+
 ## 下载方式
 
 服务提供以下模型下载接口：

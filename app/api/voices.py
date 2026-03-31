@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, Response
 
 from app.config import settings
 from app.models.schemas import TestVoiceRequest, VoiceInfo, VoiceListResponse
@@ -311,7 +311,7 @@ async def download_sovits_model(voice_id: str):
     summary="Download all voice files as ZIP",
     description="Download a ZIP archive containing GPT model, SoVITS model, and metadata.json.",
 )
-async def download_all(voice_id: str) -> StreamingResponse:
+async def download_all(voice_id: str) -> Response:
     """
     Download all voice model files as a ZIP archive.
 
@@ -325,7 +325,7 @@ async def download_all(voice_id: str) -> StreamingResponse:
         voice_id: Voice UUID string
 
     Returns:
-        StreamingResponse: ZIP file stream
+        Response: ZIP file with Content-Length set
 
     Raises:
         HTTPException 404: Voice does not exist
@@ -341,9 +341,11 @@ async def download_all(voice_id: str) -> StreamingResponse:
     paths = manager.get_model_paths(voice_id)
     voice_dir = paths["dir"]
 
-    # Build ZIP in memory
+    # Build ZIP in memory.
+    # Use ZIP_STORED: .ckpt/.pth files are already compressed PyTorch archives;
+    # re-compressing them is slow and saves almost nothing.
     zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_STORED) as zf:
         files_to_include = [
             paths["gpt"],
             paths["sovits"],
@@ -354,13 +356,17 @@ async def download_all(voice_id: str) -> StreamingResponse:
             if file_path.exists():
                 zf.write(str(file_path), arcname=file_path.name)
 
-    zip_buffer.seek(0)
+    zip_data = zip_buffer.getvalue()
     zip_filename = f"{voice_id}_voice_model.zip"
 
-    return StreamingResponse(
-        zip_buffer,
+    # Use Response (not StreamingResponse) so that Content-Length is set and
+    # the browser receives a complete, well-formed ZIP without chunked-encoding
+    # issues that can corrupt binary model files.
+    return Response(
+        content=zip_data,
         media_type="application/zip",
         headers={
             "Content-Disposition": f'attachment; filename="{zip_filename}"',
+            "Content-Length": str(len(zip_data)),
         },
     )

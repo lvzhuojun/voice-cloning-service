@@ -60,4 +60,4 @@ data/samples/
 
 ## Note
 
-`data/samples/` 主要用于本地调试和开发验证，不建议把真实训练数据提交到 git。
+`data/samples/` 主要用于本地调试和开发验证，不建议把真实训练数据提交到 git；仓库 `.gitignore` 默认会忽略此目录下除本说明文件以外的内容。

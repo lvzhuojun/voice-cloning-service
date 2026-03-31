@@ -18,8 +18,9 @@ storage/models/
 storage/uploads/
 
 # Training audio samples (personal recordings, not tracked)
-data/samples/*/
-# Keep README.md description file
+data/samples/**
+# Keep the folder and README.md description file
+!data/samples/
 !data/samples/README.md
 
 # Trained voice packs (legacy, production data)
