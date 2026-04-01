@@ -34,4 +34,4 @@
 
 - 文档入口以 `README.md` / `README_zh.md` 为准
 - 模型导出格式说明以 `MODEL_FORMAT.md` 为准
-- 当前 `/api/voices/{voice_id}/download/all` 会直接返回完整 ZIP 内容，便于浏览器稳定下载
+- 当前 `/api/voices/{voice_id}/download/all` 使用临时文件打包 ZIP，由 `FileResponse` 分块流式传输后自动清理，避免将 1 GB+ 模型文件全部载入内存

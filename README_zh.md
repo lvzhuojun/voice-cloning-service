@@ -2,6 +2,11 @@
 
 **[English](README.md) | [中文](README_zh.md)**
 
+![Python](https://img.shields.io/badge/python-3.10-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
+![Framework](https://img.shields.io/badge/framework-GPT--SoVITS%20v2-orange)
+
 基于 **GPT-SoVITS v2** 真实微调的 RESTful 语音克隆后端服务。
 
 上传 1–3 分钟参考音频 → 服务端完成 GPT-SoVITS 微调 → 导出可携带的双文件模型（`.ckpt` + `.pth`），供下游系统管理、分发和推理集成。
@@ -303,7 +308,7 @@ voice-cloning-service/
 
 ---
 
-## License
+## 许可证
 
 本项目采用 [MIT License](LICENSE)。
 

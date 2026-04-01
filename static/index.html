@@ -547,25 +547,20 @@ function selectAndTest(voiceId, voiceName) {
   document.getElementById('test-audio').parentElement.scrollIntoView({ behavior: 'smooth' });
 }
 
+function triggerDownload(url, filename) {
+  window.location.href = url;
+}
+
 function downloadGPT(voiceId) {
-  const a = document.createElement('a');
-  a.href = API + '/api/voices/' + voiceId + '/download/gpt';
-  a.download = voiceId + '_gpt.ckpt';
-  a.click();
+  triggerDownload(API + '/api/voices/' + voiceId + '/download/gpt', voiceId + '_gpt.ckpt');
 }
 
 function downloadSoVITS(voiceId) {
-  const a = document.createElement('a');
-  a.href = API + '/api/voices/' + voiceId + '/download/sovits';
-  a.download = voiceId + '_sovits.pth';
-  a.click();
+  triggerDownload(API + '/api/voices/' + voiceId + '/download/sovits', voiceId + '_sovits.pth');
 }
 
 function downloadAll(voiceId, voiceName) {
-  const a = document.createElement('a');
-  a.href = API + '/api/voices/' + voiceId + '/download/all';
-  a.download = voiceId + '_voice_model.zip';
-  a.click();
+  triggerDownload(API + '/api/voices/' + voiceId + '/download/all', voiceId + '_voice_model.zip');
 }
 
 async function deleteVoice(voiceId, voiceName) {

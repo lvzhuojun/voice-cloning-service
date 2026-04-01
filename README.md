@@ -2,6 +2,11 @@
 
 **[English](README.md) | [中文](README_zh.md)**
 
+![Python](https://img.shields.io/badge/python-3.10-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
+![Framework](https://img.shields.io/badge/framework-GPT--SoVITS%20v2-orange)
+
 A RESTful voice cloning backend based on **GPT-SoVITS v2** real fine-tuning.
 
 Upload 1–3 minutes of reference audio → fine-tune a personal voice model on the server → export portable dual-file models (`.ckpt` + `.pth`) for downstream systems to manage, distribute, and run inference with.

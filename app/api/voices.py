@@ -6,13 +6,15 @@ test-synthesizing GPT-SoVITS voice models.
 
 from __future__ import annotations
 
-import io
 import logging
+import os
+import tempfile
 import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse, Response
+from starlette.background import BackgroundTask
 
 from app.config import settings
 from app.models.schemas import TestVoiceRequest, VoiceInfo, VoiceListResponse
@@ -311,7 +313,7 @@ async def download_sovits_model(voice_id: str):
     summary="Download all voice files as ZIP",
     description="Download a ZIP archive containing GPT model, SoVITS model, and metadata.json.",
 )
-async def download_all(voice_id: str) -> Response:
+async def download_all(voice_id: str) -> FileResponse:
     """
     Download all voice model files as a ZIP archive.
 
@@ -325,10 +327,11 @@ async def download_all(voice_id: str) -> Response:
         voice_id: Voice UUID string
 
     Returns:
-        Response: ZIP file with Content-Length set
+        FileResponse: ZIP file streamed from a temporary file
 
     Raises:
         HTTPException 404: Voice does not exist
+        HTTPException 500: ZIP creation failed
     """
     manager = _get_manager()
 
@@ -339,34 +342,30 @@ async def download_all(voice_id: str) -> Response:
         )
 
     paths = manager.get_model_paths(voice_id)
-    voice_dir = paths["dir"]
-
-    # Build ZIP in memory.
-    # Use ZIP_STORED: .ckpt/.pth files are already compressed PyTorch archives;
-    # re-compressing them is slow and saves almost nothing.
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_STORED) as zf:
-        files_to_include = [
-            paths["gpt"],
-            paths["sovits"],
-            paths["metadata"],
-            paths["reference"],
-        ]
-        for file_path in files_to_include:
-            if file_path.exists():
-                zf.write(str(file_path), arcname=file_path.name)
-
-    zip_data = zip_buffer.getvalue()
     zip_filename = f"{voice_id}_voice_model.zip"
 
-    # Use Response (not StreamingResponse) so that Content-Length is set and
-    # the browser receives a complete, well-formed ZIP without chunked-encoding
-    # issues that can corrupt binary model files.
-    return Response(
-        content=zip_data,
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+            tmp_path = tmp.name
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_STORED) as zf:
+            for file_path in [paths["gpt"], paths["sovits"], paths["metadata"], paths["reference"]]:
+                if file_path.exists():
+                    zf.write(str(file_path), arcname=file_path.name)
+        logger.info(f"ZIP created for {voice_id}: {os.path.getsize(tmp_path):,} bytes")
+    except Exception as exc:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        logger.error(f"Failed to create ZIP for voice {voice_id}: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create ZIP archive: {exc}",
+        )
+
+    return FileResponse(
+        path=tmp_path,
         media_type="application/zip",
-        headers={
-            "Content-Disposition": f'attachment; filename="{zip_filename}"',
-            "Content-Length": str(len(zip_data)),
-        },
+        filename=zip_filename,
+        headers={"Content-Disposition": f'attachment; filename="{zip_filename}"'},
+        background=BackgroundTask(os.unlink, tmp_path),
     )
